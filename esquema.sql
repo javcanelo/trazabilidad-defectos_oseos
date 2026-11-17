@@ -2,7 +2,8 @@
 CREATE TABLE usuario (
     id INTEGER PRIMARY KEY,
     nombre TEXT NOT NULL,
-    rol TEXT NOT NULL CHECK (rol IN ('histologia', 'docente', 'estudiante'))
+    rol TEXT NOT NULL CHECK (rol IN ('histologia', 'docente', 'estudiante')),
+    clave_hash TEXT                    -- contraseña cifrada (nunca en texto plano)
 );
 
 CREATE TABLE sujeto (

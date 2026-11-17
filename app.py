@@ -1,7 +1,9 @@
-"""Pantallas del prototipo (etapa 2: solo consulta).
+"""Pantallas del prototipo (etapa 3: login por rol y registro de acciones).
 
 Ejecutar:  streamlit run app.py
 """
+from datetime import date
+
 import streamlit as st
 
 import servicios as sv
@@ -16,6 +18,51 @@ def ir(vista, sid=None):
     st.session_state.vista, st.session_state.sid = vista, sid
     for k in ("placa_desgaste", "placa_set"):
         st.session_state.pop(k, None)
+
+
+def usuario():
+    return st.session_state.get("usuario")
+
+
+def ejecutar(funcion, *args, ok="Guardado ✅"):
+    """Llama a servicios.py; si la regla no lo permite, muestra el motivo."""
+    try:
+        funcion(usuario(), *args)
+    except (PermissionError, ValueError) as e:
+        st.error(str(e))
+        return
+    st.session_state.mensaje = ok
+    st.rerun()
+
+
+def fecha(clave):
+    return st.date_input("Fecha", value=date.today(), max_value=date.today(), format="DD/MM/YYYY", key=clave)
+
+
+def login():
+    st.title("🐭 Defectos óseos · trazabilidad")
+    with st.container(border=True):
+        st.subheader("Ingresar")
+        nombre = st.selectbox("Usuario", sv.nombres_usuarios())
+        clave = st.text_input("Contraseña", type="password")
+        if st.button("Entrar", type="primary", width="stretch"):
+            u = sv.autenticar(nombre, clave)
+            if u:
+                st.session_state.usuario = u
+                st.rerun()
+            st.error("Contraseña incorrecta.")
+        st.caption("Prototipo con datos ficticios · contraseña de prueba para todos: demo123")
+
+
+def barra_usuario():
+    u = usuario()
+    with st.sidebar:
+        st.markdown(f"👤 **{u['nombre']}**  \n{sv.NOMBRE_ROL[u['rol']]}")
+        if st.button("Salir"):
+            st.session_state.clear()
+            st.rerun()
+    if st.session_state.get("mensaje"):
+        st.toast(st.session_state.pop("mensaje"))
 
 
 def volver(*destinos):
@@ -38,14 +85,17 @@ def aviso_edta():
         st.error(f"⚠️ **Cambiar EDTA** · {len(toca)} ratón(es) llevan "
                  f"{sv.DIAS_CAMBIO_EDTA} o más días sin cambio")
         for _, a in toca.iterrows():
-            st.button(f"🧪 {a['id']} · último cambio hace {a['dias']} días",
+            c1, c2 = st.columns([3, 1])
+            c1.button(f"🧪 {a['id']} · último cambio hace {a['dias']} días",
                       on_click=ir, args=("raton", a["id"]), key=f"edta_{a['id']}")
+            if sv.puede(usuario(), "cambio_edta") and c2.button("✅ Cambié EDTA hoy", key=f"ok_edta_{a['id']}"):
+                ejecutar(sv.registrar_cambio_edta, a["id"], date.today(), ok=f"Cambio de EDTA registrado ({a['id']})")
 
 
 # ======================= MENÚ =======================
 def menu():
     st.title("🐭 Defectos óseos · trazabilidad")
-    st.caption("Prototipo con datos ficticios · solo consulta")
+    st.caption(f"Prototipo con datos ficticios · conectado como {usuario()['nombre']} ({sv.NOMBRE_ROL[usuario()['rol']]})")
     aviso_edta()
     c = sv.conteo_por_paso()
     tarjetas = [
@@ -129,6 +179,90 @@ def detalle_placa(p):
         if not h.empty:
             st.markdown("**Historial de la placa**")
             st.dataframe(h, hide_index=True, width="stretch")
+        if sv.puede(usuario(), "tecnica_placa") and p["tecnica"] != "HE":
+            with st.expander("✍️ Registrar técnica en esta placa"):
+                with st.form(f"tec_{p['id']}"):
+                    tipo = st.radio("Técnica", ["IHQ/IF", "Otra"], horizontal=True)
+                    detalle = st.text_input("Marcador o nombre de la técnica", placeholder="ej. CD31")
+                    resultado = st.selectbox("Resultado", sv.RESULTADOS)
+                    comentario = st.text_area("Comentario (opcional)")
+                    ubic = st.text_input("📍 ¿Dónde queda la placa?", value=f"Con {usuario()['nombre']}")
+                    f = fecha(f"f_tec_{p['id']}")
+                    if st.form_submit_button("Guardar", type="primary"):
+                        tec = f"IHQ/IF {detalle}".strip() if tipo == "IHQ/IF" else f"Otra: {detalle}"
+                        ejecutar(sv.registrar_tecnica, int(p["id"]), f, tec, resultado, comentario, ubic,
+                                 ok="Técnica registrada")
+        if sv.puede(usuario(), "ubicacion"):
+            with st.expander("📍 Cambiar ubicación de la placa"):
+                with st.form(f"mov_{p['id']}"):
+                    nueva = st.text_input("Nueva ubicación", value=p["ubicacion"] or "")
+                    if st.form_submit_button("Guardar"):
+                        ejecutar(sv.mover_placa, int(p["id"]), nueva, date.today(), ok="Ubicación actualizada")
+
+
+def panel_registro(r):
+    """Muestra solo lo que el rol puede registrar en el paso actual."""
+    u, paso, bid = usuario(), r["paso_actual"], r["bloque"]
+    form = None
+    if paso == "En experimentación" and sv.puede(u, "sacrificio"):
+        form = "sacrificio"
+    elif paso == "Decalcificación" and sv.puede(u, "enviar_histologia"):
+        form = "enviar"
+    elif paso == "Esperando revisión SA" and sv.puede(u, "revision_sa"):
+        form = "revision"
+    elif paso in ("Recepción", "Reinclusión", "Desgaste", "Corte de set", "Tinción HE",
+                  "Placas en técnicas") and sv.puede(u, "paso_histologia"):
+        form = paso
+    if not form:
+        return
+    with st.container(border=True):
+        st.markdown(f"#### ✍️ Registrar · {sv.SIGUIENTE.get(paso, paso)}")
+        with st.form(f"registro_{r['id']}"):
+            if form == "sacrificio":
+                f = fecha("f_sac")
+                if st.form_submit_button("Registrar sacrificio e inicio de decalcificación", type="primary"):
+                    ejecutar(sv.registrar_sacrificio, r["id"], f, ok="Sacrificio registrado")
+            elif form == "enviar":
+                forma = st.radio("Llega a histología como", ["cubo de parafina", "cabeza en EDTA"], horizontal=True)
+                f = fecha("f_env")
+                if st.form_submit_button("Registrar envío a histología", type="primary"):
+                    ejecutar(sv.enviar_a_histologia, r["id"], f, forma, ok="Recepción en histología registrada")
+            elif form == "revision":
+                decision = st.radio("Decisión", ["Profundizar desgaste", "Indicar set de corte", "Archivar"])
+                protocolo = st.selectbox("Set indicado (si corresponde)", list(sv.PROTOCOLOS))
+                f = fecha("f_rev")
+                if st.form_submit_button("Guardar revisión", type="primary"):
+                    ejecutar(sv.registrar_revision_sa, bid, f, decision, protocolo, ok="Revisión registrada")
+            elif form in ("Recepción", "Reinclusión"):
+                f = fecha("f_incl")
+                if st.form_submit_button("Inclusión en casete" if form == "Recepción" else "Reinclusión en casete",
+                                         type="primary"):
+                    ejecutar(sv.registrar_inclusion, bid, f, ok="Inclusión registrada")
+            elif form == "Desgaste":
+                ubic = st.text_input("📍 Ubicación de las placas", value="Caja de placas 1")
+                f = fecha("f_desg")
+                if st.form_submit_button("Cortar par y teñir HE la par", type="primary"):
+                    ejecutar(sv.cortar_par_desgaste, bid, f, ubic, ok="Par de desgaste registrado")
+            elif form == "Corte de set":
+                protocolo = st.selectbox("Set", list(sv.PROTOCOLOS))
+                ubic = st.text_input("📍 Ubicación de las placas", value="Caja de placas 1")
+                f = fecha("f_set")
+                if st.form_submit_button("Registrar corte del set", type="primary"):
+                    ejecutar(sv.cortar_set, bid, f, protocolo, ubic, ok="Set de corte registrado")
+            elif form == "Tinción HE":
+                f = fecha("f_he")
+                if st.form_submit_button("Registrar tinción HE del set", type="primary"):
+                    ejecutar(sv.tenir_he_set, bid, f, ok="Tinción HE registrada")
+            elif form == "Placas en técnicas":
+                f = fecha("f_arch")
+                if st.form_submit_button("Archivar / cerrar trabajo"):
+                    ejecutar(sv.archivar, bid, f, ok="Bloque archivado")
+        if bid and sv.puede(u, "ubicacion") and sv.puede(u, "paso_histologia"):
+            with st.expander("📍 Cambiar ubicación del bloque"):
+                with st.form("mover_bloque"):
+                    nueva = st.text_input("Nueva ubicación", value=r["donde"] or "")
+                    if st.form_submit_button("Guardar"):
+                        ejecutar(sv.mover_bloque, bid, nueva, date.today(), ok="Ubicación actualizada")
 
 
 def ficha_raton():
@@ -149,6 +283,8 @@ def ficha_raton():
     st.caption(" → ".join(x for x in [f"✓ {antes}" if antes else "",
                                        f"▶ **{r['paso_actual']}**",
                                        f"{sigue}" if sigue else ""] if x))
+
+    panel_registro(r)
 
     t_placas, t_manejo, t_img, t_datos, t_hist = st.tabs(
         ["🔬 Placas", "🧫 Manejo", "🩻 Imagenología", "📋 Datos", "🕓 Historial"])
@@ -189,6 +325,11 @@ Cambios de EDTA: {len(cambios)}""")
                 dias = int(fila.iloc[0]["dias"])
                 (b.error if dias >= sv.DIAS_CAMBIO_EDTA else b.success)(
                     f"Último cambio hace {dias} días" + (" · ⚠️ toca cambiar EDTA" if dias >= sv.DIAS_CAMBIO_EDTA else ""))
+            if not dec["fecha_fin"] and sv.puede(usuario(), "cambio_edta"):
+                with b.form("cambio_edta"):
+                    f = fecha("f_edta")
+                    if st.form_submit_button("🧪 Registrar cambio de EDTA", type="primary"):
+                        ejecutar(sv.registrar_cambio_edta, r["id"], f, ok="Cambio de EDTA registrado")
             with st.expander("Ver cambios de EDTA"):
                 st.dataframe(cambios, hide_index=True, width="stretch")
         pp = sv.procesamiento_previo(r["id"])
@@ -267,5 +408,9 @@ def tecnicas():
     st.dataframe(sv.resultados_recientes(), hide_index=True, width="stretch")
 
 
-{"menu": menu, "ratones": lista_ratones, "raton": ficha_raton, "manejo": manejo,
- "histologia": histologia, "tecnicas": tecnicas}[st.session_state.vista]()
+if not usuario():
+    login()
+else:
+    barra_usuario()
+    {"menu": menu, "ratones": lista_ratones, "raton": ficha_raton, "manejo": manejo,
+     "histologia": histologia, "tecnicas": tecnicas}[st.session_state.vista]()

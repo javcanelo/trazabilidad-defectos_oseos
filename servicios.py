@@ -3,8 +3,9 @@
 La pantalla (app.py) nunca escribe SQL; le pide los datos a estas funciones.
 En la etapa 3 aquí se agregan las reglas de quién puede escribir qué.
 """
+import hashlib
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -130,7 +131,7 @@ def placas(sid):
                p.tecnica, p.fecha_corte, p.fecha_tecnica, p.rotulo, p.estado, p.ubicacion,
                r.estado_final AS resultado, r.comentario, u.nombre AS quien
         FROM placa p JOIN bloque b ON b.id = p.bloque_id
-        LEFT JOIN resultado_placa r ON r.placa_id = p.id
+        LEFT JOIN resultado_placa r ON r.id = (SELECT MAX(id) FROM resultado_placa WHERE placa_id = p.id)
         LEFT JOIN usuario u ON u.id = r.usuario_id
         WHERE b.sujeto_id = ?
         ORDER BY CASE p.serie WHEN 'desgaste' THEN 0 ELSE 1 END, p.correlativo""", (sid,))
@@ -190,3 +191,243 @@ def imagenologia(sid):
 def procesamiento_previo(sid):
     return _q("""SELECT tipo AS "Procedimiento", fecha AS "Fecha", lugar AS "Lugar"
                  FROM procesamiento_previo WHERE sujeto_id = ? ORDER BY fecha""", (sid,))
+
+
+# =====================================================================
+# ETAPA 3 · Usuarios, permisos y registro de acciones
+# =====================================================================
+
+# Qué puede registrar cada rol. La pantalla oculta lo que no corresponde,
+# pero la regla se valida AQUÍ (capa intermedia), no en la pantalla.
+PERMISOS = {
+    "histologia": {"cambio_edta", "enviar_histologia", "paso_histologia", "ubicacion", "tecnica_placa"},
+    "docente": {"sacrificio", "revision_sa", "enviar_histologia"},
+    "estudiante": {"cambio_edta", "enviar_histologia", "tecnica_placa", "ubicacion"},
+}
+NOMBRE_ROL = {"histologia": "Histología", "docente": "Docente", "estudiante": "Estudiante"}
+
+PROTOCOLOS = {
+    "estándar": ([("HE", 3), ("IHQ/IF", 3), ("HE", 3), ("IHQ/IF", 3), ("HE", 3)], {1, 8, 15}),
+    "estrella": ([("IHQ/IF", 4), ("HE", 4)] * 2 + [("IHQ/IF", 4), ("HE", 3)], {5, 21}),
+    "corazón": ([("IHQ/IF", 4), ("HE", 4)] * 4 + [("IHQ/IF", 4), ("HE", 3)], {5, 21, 39}),
+}
+RESULTADOS = ["realizada", "realizada con observaciones", "en proceso", "repetir", "perdida"]
+
+
+def cifrar(clave, uid):
+    return hashlib.pbkdf2_hmac("sha256", clave.encode(), f"sal-{uid}".encode(), 100_000).hex()
+
+
+def nombres_usuarios():
+    return _q("SELECT nombre FROM usuario ORDER BY id")["nombre"].tolist()
+
+
+def autenticar(nombre, clave):
+    u = _uno("SELECT id, nombre, rol, clave_hash FROM usuario WHERE nombre = ?", (nombre,))
+    if u and u["clave_hash"] == cifrar(clave, int(u["id"])):
+        return {"id": int(u["id"]), "nombre": u["nombre"], "rol": u["rol"]}
+    return None
+
+
+def puede(usuario, accion):
+    return bool(usuario) and accion in PERMISOS.get(usuario["rol"], set())
+
+
+def _exigir(usuario, accion):
+    if not puede(usuario, accion):
+        raise PermissionError(f"El rol {NOMBRE_ROL.get(usuario['rol'], '?')} no puede realizar esta acción.")
+
+
+class _Escritura:
+    """Abre la base, hace todo junto (o nada si hay error) y cierra."""
+    def __enter__(self):
+        self.con = sqlite3.connect(DB)
+        return self.con
+
+    def __exit__(self, tipo, *_):
+        if tipo is None:
+            self.con.commit()
+        else:
+            self.con.rollback()
+        self.con.close()
+
+
+def _evento(con, u, entidad, eid, accion, fecha, detalle=""):
+    con.execute("INSERT INTO evento (usuario_id, entidad, entidad_id, accion, fecha, detalle)"
+                " VALUES (?,?,?,?,?,?)", (u["id"], entidad, str(eid), accion, fecha.isoformat(),
+                                          f"{detalle} [registrado {datetime.now():%d/%m/%y %H:%M}]".strip()))
+
+
+def _rotulo(con, bloque_id, tecnica, fecha, corr):
+    sid = con.execute("SELECT sujeto_id FROM bloque WHERE id = ?", (bloque_id,)).fetchone()[0]
+    return f"{sid} | {tecnica} | {fecha:%d/%m/%y} | {corr}"
+
+
+def _bloque(con, bid):
+    fila = con.execute("SELECT paso, sujeto_id FROM bloque WHERE id = ?", (bid,)).fetchone()
+    if not fila:
+        raise ValueError("Bloque no encontrado.")
+    return fila
+
+
+def _exigir_paso(con, bid, *pasos):
+    paso = _bloque(con, bid)[0]
+    if paso not in pasos:
+        raise ValueError(f"El bloque está en «{paso}»; esta acción corresponde a: {', '.join(pasos)}.")
+
+
+# ---------------- Manejo ----------------
+def registrar_sacrificio(u, sid, fecha):
+    _exigir(u, "sacrificio")
+    with _Escritura() as con:
+        con.execute("UPDATE sujeto SET fecha_sacrificio = ? WHERE id = ?", (fecha.isoformat(), sid))
+        con.execute("INSERT INTO decalcificacion (sujeto_id, fecha_inicio) VALUES (?,?)", (sid, fecha.isoformat()))
+        _evento(con, u, "sujeto", sid, "Sacrificio y fijación en formalina", fecha)
+        _evento(con, u, "sujeto", sid, "Inicio decalcificación EDTA", fecha)
+
+
+def registrar_cambio_edta(u, sid, fecha):
+    _exigir(u, "cambio_edta")
+    with _Escritura() as con:
+        if not con.execute("SELECT 1 FROM decalcificacion WHERE sujeto_id = ? AND fecha_fin IS NULL", (sid,)).fetchone():
+            raise ValueError("Este ratón no tiene una decalcificación en curso.")
+        con.execute("INSERT INTO cambio_edta (sujeto_id, fecha, usuario_id) VALUES (?,?,?)",
+                    (sid, fecha.isoformat(), u["id"]))
+        _evento(con, u, "sujeto", sid, "Cambio de EDTA", fecha)
+
+
+def enviar_a_histologia(u, sid, fecha, forma):
+    """Llega a histología como 'cubo de parafina' o 'cabeza en EDTA' (sigue decalcificando)."""
+    _exigir(u, "enviar_histologia")
+    bid = f"{sid}-B1"
+    with _Escritura() as con:
+        if con.execute("SELECT 1 FROM bloque WHERE id = ?", (bid,)).fetchone():
+            raise ValueError("Este ratón ya está en histología.")
+        if forma == "cubo de parafina":
+            con.execute("UPDATE decalcificacion SET fecha_fin = ? WHERE sujeto_id = ? AND fecha_fin IS NULL",
+                        (fecha.isoformat(), sid))
+            _evento(con, u, "sujeto", sid, "Fin decalcificación", fecha)
+        paso = "Recepción" if forma == "cabeza en EDTA" else "Reinclusión"
+        ubic = "Frasco EDTA, mesón histología" if forma == "cabeza en EDTA" else "Mesón histología"
+        con.execute("INSERT INTO bloque (id, sujeto_id, forma_llegada, fecha_recepcion, paso, estado, ubicacion)"
+                    " VALUES (?,?,?,?,?,?,?)", (bid, sid, forma, fecha.isoformat(), paso, "en lab", ubic))
+        _evento(con, u, "bloque", bid, f"Recepción en histología ({forma})", fecha)
+
+
+# ---------------- Histología ----------------
+def registrar_inclusion(u, bid, fecha):
+    _exigir(u, "paso_histologia")
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Recepción", "Reinclusión")
+        paso, sid = _bloque(con, bid)
+        con.execute("UPDATE decalcificacion SET fecha_fin = ? WHERE sujeto_id = ? AND fecha_fin IS NULL",
+                    (fecha.isoformat(), sid))
+        con.execute("UPDATE bloque SET fecha_reinclusion = ?, paso = 'Desgaste', ubicacion = 'Gaveta de bloques'"
+                    " WHERE id = ?", (fecha.isoformat(), bid))
+        _evento(con, u, "bloque", bid, "Inclusión en casete" if paso == "Recepción" else "Reinclusión en casete", fecha)
+
+
+def cortar_par_desgaste(u, bid, fecha, ubicacion):
+    """Corta un par: la impar queda sin teñir, la par se tiñe con HE."""
+    _exigir(u, "paso_histologia")
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Desgaste")
+        ultimo = con.execute("SELECT COALESCE(MAX(correlativo), 0) FROM placa WHERE bloque_id = ? AND serie = 'desgaste'",
+                             (bid,)).fetchone()[0]
+        for corr in (ultimo + 1, ultimo + 2):
+            he = corr % 2 == 0
+            con.execute("INSERT INTO placa (bloque_id, serie, correlativo, tipo_portaobjeto, protocolo, destino,"
+                        " tecnica, fecha_corte, fecha_tecnica, rotulo, ubicacion, estado)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (bid, "desgaste", corr, "normal", "evaluación", "HE", "HE" if he else None,
+                         fecha.isoformat(), fecha.isoformat() if he else None,
+                         _rotulo(con, bid, "HE", fecha, corr) if he else None, ubicacion,
+                         "terminada" if he else "disponible"))
+        con.execute("UPDATE bloque SET paso = 'Esperando revisión SA' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, f"Desgaste: corte de par {ultimo + 1}-{ultimo + 2} y HE de la {ultimo + 2}", fecha)
+
+
+def registrar_revision_sa(u, bid, fecha, decision, protocolo=None):
+    _exigir(u, "revision_sa")
+    destino = {"Profundizar desgaste": "Desgaste", "Indicar set de corte": "Corte de set", "Archivar": "Archivado"}
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Esperando revisión SA")
+        con.execute("UPDATE bloque SET paso = ? WHERE id = ?", (destino[decision], bid))
+        detalle = decision + (f": set {protocolo}" if decision == "Indicar set de corte" and protocolo else "")
+        _evento(con, u, "bloque", bid, "Revisión SA", fecha, detalle)
+
+
+def cortar_set(u, bid, fecha, protocolo, ubicacion):
+    _exigir(u, "paso_histologia")
+    grupos, _ = PROTOCOLOS[protocolo]
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Corte de set")
+        corr = 0
+        for destino, cantidad in grupos:
+            for _ in range(cantidad):
+                corr += 1
+                con.execute("INSERT INTO placa (bloque_id, serie, correlativo, tipo_portaobjeto, protocolo, destino,"
+                            " fecha_corte, ubicacion, estado) VALUES (?,?,?,?,?,?,?,?,?)",
+                            (bid, "set", corr, "normal" if destino == "HE" else "cargado", protocolo, destino,
+                             fecha.isoformat(), ubicacion, "disponible"))
+        con.execute("UPDATE bloque SET paso = 'Tinción HE' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, f"Corte set {protocolo} ({corr} placas)", fecha)
+
+
+def tenir_he_set(u, bid, fecha):
+    _exigir(u, "paso_histologia")
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Tinción HE")
+        protocolo = con.execute("SELECT protocolo FROM placa WHERE bloque_id = ? AND serie = 'set' LIMIT 1",
+                                (bid,)).fetchone()[0]
+        tenidas = sorted(PROTOCOLOS[protocolo][1])
+        for corr in tenidas:
+            con.execute("UPDATE placa SET tecnica = 'HE', fecha_tecnica = ?, rotulo = ?, estado = 'terminada'"
+                        " WHERE bloque_id = ? AND serie = 'set' AND correlativo = ?",
+                        (fecha.isoformat(), _rotulo(con, bid, "HE", fecha, corr), bid, corr))
+        con.execute("UPDATE bloque SET paso = 'Placas en técnicas' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, f"Tinción HE placas {tenidas}", fecha)
+
+
+def archivar(u, bid, fecha):
+    _exigir(u, "paso_histologia")
+    with _Escritura() as con:
+        con.execute("UPDATE bloque SET paso = 'Archivado', ubicacion = 'Archivo histología' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, "Archivar / cerrar trabajo", fecha)
+
+
+def mover_bloque(u, bid, ubicacion, fecha):
+    _exigir(u, "ubicacion")
+    with _Escritura() as con:
+        con.execute("UPDATE bloque SET ubicacion = ? WHERE id = ?", (ubicacion, bid))
+        _evento(con, u, "bloque", bid, "Cambio de ubicación del bloque", fecha, ubicacion)
+
+
+# ---------------- Placas ----------------
+def registrar_tecnica(u, pid, fecha, tecnica, resultado, comentario, ubicacion):
+    _exigir(u, "tecnica_placa")
+    if resultado not in RESULTADOS:
+        raise ValueError("Resultado no válido.")
+    if not tecnica.strip():
+        raise ValueError("Indica qué técnica se hizo.")
+    with _Escritura() as con:
+        fila = con.execute("SELECT bloque_id, correlativo, tecnica FROM placa WHERE id = ?", (pid,)).fetchone()
+        if not fila:
+            raise ValueError("Placa no encontrada.")
+        bid, corr, actual = fila
+        if actual == "HE":
+            raise ValueError("Esta placa ya está teñida con HE.")
+        estado = {"perdida": "perdida", "en proceso": "en técnica"}.get(resultado, "terminada")
+        con.execute("UPDATE placa SET tecnica = ?, fecha_tecnica = ?, rotulo = ?, estado = ?, ubicacion = ?"
+                    " WHERE id = ?", (tecnica, fecha.isoformat(), _rotulo(con, bid, tecnica, fecha, corr),
+                                      estado, "Perdida" if resultado == "perdida" else ubicacion, pid))
+        con.execute("INSERT INTO resultado_placa (placa_id, usuario_id, tecnica_realizada, estado_final, comentario, fecha)"
+                    " VALUES (?,?,?,?,?,?)", (pid, u["id"], tecnica, resultado, comentario, fecha.isoformat()))
+        _evento(con, u, "placa", pid, f"Técnica: {tecnica}", fecha, f"{resultado}. {comentario}".strip())
+
+
+def mover_placa(u, pid, ubicacion, fecha):
+    _exigir(u, "ubicacion")
+    with _Escritura() as con:
+        con.execute("UPDATE placa SET ubicacion = ? WHERE id = ?", (ubicacion, pid))
+        _evento(con, u, "placa", pid, "Cambio de ubicación de la placa", fecha, ubicacion)

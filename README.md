@@ -24,7 +24,16 @@ Aplicación web con un menú de 4 secciones:
 | 🔬 Histología | Ratones agrupados por paso del procesamiento |
 | 🧪 Técnicas | Placas disponibles para IHQ/IF y resultados registrados |
 
-Estado: **etapa 2 de 5** (solo consulta). Plan completo en [`docs/02_arquitectura.md`](docs/02_arquitectura.md).
+Estado: **etapa 3 de 5** (login por rol y registro de acciones).
+
+**Usuarios de prueba** (contraseña `demo123`): Javiera (histología), Docente responsable,
+Estudiante A, B y C.
+
+| Rol | Registra |
+|---|---|
+| Histología | Inclusión/reinclusión, pares de desgaste, corte de set, tinción HE, archivo, ubicaciones, técnicas |
+| Docente | Sacrificio, revisión SA, envío a histología |
+| Estudiante | Cambios de EDTA, envío a histología, técnicas en placas (IHQ/IF u otra), ubicación de placas | Plan completo en [`docs/02_arquitectura.md`](docs/02_arquitectura.md).
 
 ## Cómo ejecutarlo
 

@@ -100,7 +100,9 @@ def main():
     DB.parent.mkdir(exist_ok=True)
     con = sqlite3.connect(DB)
     reiniciar(con)
-    con.executemany("INSERT INTO usuario VALUES (?,?,?)", USUARIOS)
+    from servicios import cifrar  # misma función que usa el login
+    for uid, nombre, rol in USUARIOS:
+        insertar(con, "usuario", id=uid, nombre=nombre, rol=rol, clave_hash=cifrar("demo123", uid))
 
     for n, num in enumerate(random.sample(range(9000000, 9999999), 30), start=1):
         sid, plan = str(num), PLAN.get(n, "Placas en técnicas")
