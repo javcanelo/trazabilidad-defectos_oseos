@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.env/
+.venv/
+
+# SQLite (archivos temporales)
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secretos de Streamlit (contraseñas de la base en la nube): NUNCA a GitHub
+.streamlit/secrets.toml
+
+# Sistema
+.DS_Store
+Thumbs.db
