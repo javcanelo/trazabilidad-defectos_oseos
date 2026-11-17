@@ -4,6 +4,7 @@ La pantalla (app.py) nunca escribe SQL; le pide los datos a estas funciones.
 En la etapa 3 aquí se agregan las reglas de quién puede escribir qué.
 """
 import hashlib
+import os
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -11,6 +12,12 @@ from pathlib import Path
 import pandas as pd
 
 DB = Path(__file__).parent / "data" / "prototipo.db"
+
+# Si existe DATABASE_URL (Supabase), se usa PostgreSQL en la nube; si no, SQLite local.
+# La contraseña de la base NUNCA va en el código: viene de .streamlit/secrets.toml o del entorno.
+DATABASE_URL = os.environ.get("DATABASE_URL")
+ES_POSTGRES = bool(DATABASE_URL)
+_lectura_pg = None
 DIAS_CAMBIO_EDTA = 3  # aviso si pasan más días que esto sin cambiar EDTA
 
 PASOS_MANEJO = ["En experimentación", "Decalcificación"]
@@ -32,9 +39,44 @@ SIGUIENTE = {
 }
 
 
+def _sql(sql):
+    """Las consultas se escriben con '?'; PostgreSQL usa '%s'."""
+    return sql.replace("?", "%s") if ES_POSTGRES else sql
+
+
+def _conectar(autocommit=False):
+    if ES_POSTGRES:
+        import psycopg
+        # prepare_threshold=None: compatible con el "pooler" de Supabase
+        return psycopg.connect(DATABASE_URL, autocommit=autocommit, prepare_threshold=None)
+    return sqlite3.connect(DB)
+
+
+def _ejecutar_lectura(sql, params):
+    global _lectura_pg
+    if not ES_POSTGRES:
+        con = sqlite3.connect(DB)
+        try:
+            cur = con.execute(sql, params)
+            return [d[0] for d in cur.description], cur.fetchall()
+        finally:
+            con.close()
+    # En la nube se reutiliza una conexión (abrir una por consulta es lento).
+    for intento in range(2):
+        try:
+            if _lectura_pg is None or _lectura_pg.closed or _lectura_pg.broken:
+                _lectura_pg = _conectar(autocommit=True)
+            cur = _lectura_pg.execute(_sql(sql), params)
+            return [d[0] for d in cur.description], cur.fetchall()
+        except Exception:
+            _lectura_pg = None
+            if intento:
+                raise
+
+
 def _q(sql, params=()):
-    with sqlite3.connect(DB) as con:
-        return pd.read_sql_query(sql, con, params=params)
+    columnas, filas = _ejecutar_lectura(sql, tuple(params))
+    return pd.DataFrame(filas, columns=columnas)
 
 
 def _uno(sql, params=()):
@@ -152,9 +194,9 @@ def historial_placa(pid):
 def placas_para_tecnicas():
     """Placas de set sin técnica todavía, agrupadas por ratón."""
     return _q("""
-        SELECT b.sujeto_id AS "Ratón", p.protocolo AS "Protocolo",
-               SUM(p.tipo_portaobjeto = 'cargado') AS "Cargadas disponibles",
-               SUM(p.tipo_portaobjeto = 'normal') AS "Normales disponibles",
+        SELECT b.sujeto_id AS "Ratón", MIN(p.protocolo) AS "Protocolo",
+               SUM(CASE WHEN p.tipo_portaobjeto = 'cargado' THEN 1 ELSE 0 END) AS "Cargadas disponibles",
+               SUM(CASE WHEN p.tipo_portaobjeto = 'normal' THEN 1 ELSE 0 END) AS "Normales disponibles",
                MIN(p.ubicacion) AS "Ubicación"
         FROM placa p JOIN bloque b ON b.id = p.bloque_id
         WHERE p.serie = 'set' AND p.tecnica IS NULL AND b.paso = 'Placas en técnicas'
@@ -238,18 +280,29 @@ def _exigir(usuario, accion):
         raise PermissionError(f"El rol {NOMBRE_ROL.get(usuario['rol'], '?')} no puede realizar esta acción.")
 
 
+class _Con:
+    """Envoltorio mínimo para escribir igual en SQLite y PostgreSQL."""
+    def __init__(self, crudo):
+        self.crudo = crudo
+
+    def execute(self, sql, params=()):
+        cur = self.crudo.cursor()
+        cur.execute(_sql(sql), tuple(params))
+        return cur
+
+
 class _Escritura:
     """Abre la base, hace todo junto (o nada si hay error) y cierra."""
     def __enter__(self):
-        self.con = sqlite3.connect(DB)
-        return self.con
+        self.crudo = _conectar()
+        return _Con(self.crudo)
 
     def __exit__(self, tipo, *_):
         if tipo is None:
-            self.con.commit()
+            self.crudo.commit()
         else:
-            self.con.rollback()
-        self.con.close()
+            self.crudo.rollback()
+        self.crudo.close()
 
 
 def _evento(con, u, entidad, eid, accion, fecha, detalle=""):

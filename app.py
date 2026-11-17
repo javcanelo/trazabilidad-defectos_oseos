@@ -2,11 +2,19 @@
 
 Ejecutar:  streamlit run app.py
 """
+import os
 from datetime import date
 
 import streamlit as st
 
-import servicios as sv
+# Contraseña de la base en la nube: viene de los "secrets" (nunca del código).
+try:
+    if "DATABASE_URL" in st.secrets:
+        os.environ.setdefault("DATABASE_URL", st.secrets["DATABASE_URL"])
+except Exception:
+    pass  # sin secrets: se usa la base local (SQLite)
+
+import servicios as sv  # noqa: E402
 
 st.set_page_config(page_title="Defectos óseos · trazabilidad", page_icon="🐭", layout="wide")
 
@@ -58,6 +66,7 @@ def barra_usuario():
     u = usuario()
     with st.sidebar:
         st.markdown(f"👤 **{u['nombre']}**  \n{sv.NOMBRE_ROL[u['rol']]}")
+        st.caption("🗄️ Base: Supabase (nube)" if sv.ES_POSTGRES else "🗄️ Base: local (SQLite)")
         if st.button("Salir"):
             st.session_state.clear()
             st.rerun()
