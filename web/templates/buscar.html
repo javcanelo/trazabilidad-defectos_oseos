@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% from "_macros.html" import ruta %}
+{% block titulo %}Buscar{% endblock %}
+{% block contenido %}
+<div class="encabezado"><div><h1>Búsqueda</h1><p>{% if q %}Resultados para «{{ q }}»{% else %}Escribe un número de ratón, un rótulo o una ubicación.{% endif %}</p></div></div>
+{% if q %}
+<div class="rejilla r2">
+  <div class="tarjeta"><h3>Ratones</h3><div class="lista-simple">
+    {% for r in ratones %}<a href="/ratones/{{ r }}" class="num">{{ r }}</a>{% else %}<p class="vacio">Ninguno.</p>{% endfor %}</div></div>
+  <div class="tarjeta"><h3>Placas</h3><div class="lista-simple">
+    {% for p in placas %}<a href="/placas/{{ p.id }}"><span><b class="num">{{ p.sujeto_id }}</b> · {{ p.serie }} {{ p.correlativo }}<br><small>{{ p.rotulo or 'sin rótulo' }}</small></span><small>{{ ruta(p.ubicacion) }}</small></a>
+    {% else %}<p class="vacio">Ninguna.</p>{% endfor %}</div></div>
+</div>
+{% endif %}
+{% endblock %}

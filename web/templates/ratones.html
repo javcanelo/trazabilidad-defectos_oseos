@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip, ruta %}
+{% block titulo %}Ratones{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <div><h1>Ratones</h1><p>{{ ratones|length }} {{ 'resultado' if ratones|length == 1 else 'resultados' }}{% if paso != 'Todos' %} en «{{ paso }}»{% endif %}</p></div>
+  <form class="registro">
+    <label>Paso
+      <select name="paso" onchange="this.form.submit()">
+        <option {{ 'selected' if paso == 'Todos' }}>Todos</option>
+        {% for p in pasos %}<option value="{{ p }}" {{ 'selected' if paso == p }}>{{ p }} ({{ conteo[p] }})</option>{% endfor %}
+      </select>
+    </label>
+    <label>Número <input name="q" value="{{ q }}" placeholder="ej. 9013"></label>
+    <button class="secundario">Filtrar</button>
+  </form>
+</div>
+<div class="tarjeta tabla-scroll" style="padding:6px 8px">
+  <table>
+    <thead><tr><th>Número</th><th>Paso actual</th><th>Grupo</th><th>Defectos (izq. / der.)</th><th>HE</th><th>Dónde está</th><th>Último trabajo</th></tr></thead>
+    <tbody>
+    {% for r in ratones %}
+      <tr>
+        <td><a class="num" href="/ratones/{{ r.id }}">{{ r.id }}</a></td>
+        <td>{{ chip(r.paso_actual, color_paso) }}</td>
+        <td>{{ r.grupo }}</td>
+        <td><small>{{ r.izq }} / {{ r.der }}</small></td>
+        <td>{{ r.he }}</td>
+        <td><small>{{ ruta(r.donde) }}</small></td>
+        <td><small>{{ r.ultimo or '—' }}</small></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="vacio">No hay ratones con ese filtro.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

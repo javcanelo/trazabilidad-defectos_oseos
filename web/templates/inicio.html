@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip %}
+{% block titulo %}Inicio{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <div><h1>Hola, {{ u.nombre.split(' ')[0] }}</h1><p>Estado actual de los ratones y el trabajo pendiente.</p></div>
+</div>
+
+{% if alertas %}
+<div class="alerta">
+  <h2><i data-lucide="alarm-clock"></i> Cambiar EDTA · {{ alertas|length }} ratón(es) con {{ dias_edta }}+ días sin cambio</h2>
+  {% for a in alertas %}
+  <div class="alerta-fila">
+    <a href="/ratones/{{ a.id }}" class="num">{{ a.id }}</a>
+    <span>último cambio hace <b>{{ a.dias }}</b> días</span>
+    {% if puede('cambio_edta') %}
+    <form method="post" action="/edta/{{ a.id }}"><button><i data-lucide="check"></i> Cambié EDTA hoy</button></form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="rejilla r4" style="margin-bottom:14px">
+  <a class="tarjeta kpi" href="/manejo"><b>{{ conteo['En experimentación'] + conteo['Decalcificación'] }}</b><small>En manejo (vivos o en EDTA)</small></a>
+  <a class="tarjeta kpi" href="/histologia"><b>{{ conteo['Recepción'] + conteo['Reinclusión'] + conteo['Desgaste'] + conteo['Corte de set'] + conteo['Tinción HE'] }}</b><small>En histología</small></a>
+  <a class="tarjeta kpi" href="/ratones?paso=Esperando revisión SA"><b>{{ conteo['Esperando revisión SA'] }}</b><small>Esperando revisión SA</small></a>
+  <a class="tarjeta kpi" href="/tecnicas"><b>{{ conteo['Placas en técnicas'] }}</b><small>Con placas en técnicas</small></a>
+</div>
+
+<div class="rejilla r2">
+  <div class="tarjeta">
+    <h3>Ratones por paso</h3>
+    <div class="lista-simple">
+      {% for p in pasos %}
+      <a href="/ratones?paso={{ p|url }}">{{ chip(p, color_paso) }}<b>{{ conteo[p] }}</b></a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="tarjeta">
+    <h3>Actividad reciente</h3>
+    <div class="lista-simple">
+      {% for e in eventos %}
+      <a href="/ratones/{{ e.sujeto_id }}"><span><b>{{ e.accion }}</b><br><small>{{ e.quien }} · ratón {{ e.sujeto_id }}</small></span><small>{{ e.fecha }}</small></a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

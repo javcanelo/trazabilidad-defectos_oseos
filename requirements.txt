@@ -1,3 +1,8 @@
-streamlit>=1.40
+fastapi
+uvicorn
+jinja2
+python-multipart
+itsdangerous
+qrcode
 pandas
 psycopg[binary]

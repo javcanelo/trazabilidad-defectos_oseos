@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block titulo %}Técnicas{% endblock %}
+{% block contenido %}
+<div class="encabezado"><div><h1>Técnicas</h1><p>Placas disponibles para IHQ/IF y lo que se ha registrado.</p></div></div>
+<div class="tarjeta tabla-scroll"><h3>Placas disponibles</h3><table>
+  <thead><tr><th>Ratón</th><th>Set</th><th>Cargadas</th><th>Normales sin teñir</th></tr></thead><tbody>
+  {% for d in disponibles %}<tr><td><a class="num" href="/ratones/{{ d['Ratón'] }}?tab=placas">{{ d['Ratón'] }}</a></td><td>{{ d['Protocolo'] }}</td><td>{{ d['Cargadas disponibles'] }}</td><td>{{ d['Normales disponibles'] }}</td></tr>
+  {% else %}<tr><td colspan="4" class="vacio">No hay placas disponibles.</td></tr>{% endfor %}</tbody></table></div>
+<div class="tarjeta tabla-scroll"><h3>Resultados registrados</h3><table>
+  <thead><tr><th>Fecha</th><th>Ratón</th><th>Placa</th><th>Técnica</th><th>Resultado</th><th>Comentario</th><th>Quién</th></tr></thead><tbody>
+  {% for r in resultados %}<tr><td>{{ r['Fecha'] }}</td><td><a class="num" href="/ratones/{{ r['Ratón'] }}?tab=placas">{{ r['Ratón'] }}</a></td><td>{{ r['Placa'] }}</td><td>{{ r['Técnica'] }}</td><td>{{ r['Resultado'] }}</td><td><small>{{ r['Comentario'] }}</small></td><td>{{ r['Quién'] }}</td></tr>
+  {% else %}<tr><td colspan="7" class="vacio">Sin resultados todavía.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

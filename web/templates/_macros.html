@@ -1,0 +1,34 @@
+{% macro chip(paso, color_paso) -%}
+  <span class="chip chip-{{ color_paso.get(paso, 'gris') }}">{{ paso }}</span>
+{%- endmacro %}
+
+{% macro portaobjeto(p, mostrar_num=True) -%}
+  {# Placa en miniatura: esmerilado a la izquierda (blanco con + si es cargada) y zona de tejido coloreada por estado #}
+  <a href="/placas/{{ p.id }}" class="porta porta-{{ tipo_placa(p) }} {{ 'porta-cargado' if p.tipo_portaobjeto == 'cargado' }}"
+     title="Placa {{ p.correlativo }} · {{ p.tecnica or 'sin técnica' }} · {{ p.ubicacion or '' }}">
+    <span class="esmerilado">{% if p.tipo_portaobjeto == 'cargado' %}<i class="mas">+</i>{% endif %}{{ p.correlativo if mostrar_num }}</span>
+    <span class="tejido"></span>
+  </a>
+{%- endmacro %}
+
+{% macro leyenda() -%}
+  <div class="leyenda">
+    <span><i class="porta-mini porta-he"></i>HE</span>
+    <span><i class="porta-mini porta-normal"></i>Normal sin teñir</span>
+    <span><i class="porta-mini porta-cargada"></i>Cargada disponible</span>
+    <span><i class="porta-mini porta-hecha"></i>Técnica realizada</span>
+    <span><i class="porta-mini porta-proceso"></i>En proceso</span>
+    <span><i class="porta-mini porta-repetir"></i>Repetir</span>
+    <span><i class="porta-mini porta-perdida"></i>Perdida</span>
+  </div>
+{%- endmacro %}
+
+{% macro ruta(texto) -%}
+  {% if texto %}
+    <span class="ruta">{% for parte in texto.split(' › ') %}{% if not loop.first %}<i data-lucide="chevron-right"></i>{% endif %}<span>{{ parte }}</span>{% endfor %}</span>
+  {% else %}—{% endif %}
+{%- endmacro %}
+
+{% macro campo_fecha(hoy) -%}
+  <label>Fecha <input type="date" name="fecha" value="{{ hoy }}" max="{{ hoy }}"></label>
+{%- endmacro %}

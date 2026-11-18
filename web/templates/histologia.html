@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_macros.html" import chip, ruta %}
+{% block titulo %}Histología{% endblock %}
+{% block contenido %}
+<div class="encabezado"><div><h1>Histología</h1><p>Lo que se está haciendo, por paso.</p></div></div>
+{% for paso, lista in grupos %}
+<div class="tarjeta">
+  <h2>{{ chip(paso, color_paso) }} <small>{{ lista|length }}</small></h2>
+  {% if lista %}
+  <div class="tabla-scroll"><table><thead><tr><th>Ratón</th><th>Último trabajo</th><th>Dónde está</th><th>HE</th></tr></thead><tbody>
+  {% for r in lista %}<tr><td><a class="num" href="/ratones/{{ r.id }}">{{ r.id }}</a></td><td><small>{{ r.ultimo }}</small></td><td><small>{{ ruta(r.donde) }}</small></td><td>{{ r.he }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="vacio">Nada en este paso.</p>{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

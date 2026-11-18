@@ -66,6 +66,14 @@ Clase: no modelar la base con HL7/FHIR; si se necesita, una capa aparte que trad
   capa de traducción solo si en el futuro hay que intercambiar datos.
 
 ---------------------------------------------------------------------------
+### D8. ¿Seguir con Streamlit o hacer una web propia? (decidido tras la etapa 4)
+- Streamlit: rápido, pero el diseño queda limitado ("se ve a Streamlit").
+- Web propia (FastAPI + HTML/CSS): diseño libre tipo LIMS (menú lateral, fichas, linaje, QR).
+- Decisión: **web propia**. Se reutilizan sin cambios `servicios.py` y la base de datos, porque las
+  capas estaban separadas (D1). Publicación: **Render** (gratis, sin tarjeta) + Supabase.
+- Mi razón:
+
+---------------------------------------------------------------------------
 ## Roles (MVP: fijos)
 | Rol | Registra | Ve |
 |---|---|---|

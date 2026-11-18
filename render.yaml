@@ -1,0 +1,15 @@
+# Configuración para publicar en Render (plan gratuito, sin tarjeta).
+services:
+  - type: web
+    name: osteotraza
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn web.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_URL      # se pega a mano en Render (conexión Session pooler de Supabase)
+        sync: false
+      - key: SECRET_KEY        # Render la genera sola; firma las sesiones de login
+        generateValue: true

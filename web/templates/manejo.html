@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block titulo %}Manejo{% endblock %}
+{% block contenido %}
+<div class="encabezado"><div><h1>Manejo</h1><p>Ratones en experimentación y en decalcificación (EDTA). Aviso a los {{ dias_edta }} días sin cambio.</p></div></div>
+<div class="rejilla r2">
+  <div class="tarjeta"><h3>En decalcificación · EDTA</h3>
+    <table><thead><tr><th>Ratón</th><th>Último cambio</th><th></th></tr></thead><tbody>
+    {% for r in edta|sort(attribute='dias', reverse=True) %}
+      <tr><td><a class="num" href="/ratones/{{ r.id }}?tab=manejo">{{ r.id }}</a><br><small>{{ r.paso_actual }}</small></td>
+          <td>hace <b>{{ r.dias }}</b> días {% if r.dias >= dias_edta %}<span class="chip chip-naranja">cambiar</span>{% endif %}</td>
+          <td>{% if puede('cambio_edta') %}<form method="post" action="/edta/{{ r.id }}"><button class="{{ '' if r.dias >= dias_edta else 'secundario' }}"><i data-lucide="check"></i> Cambié hoy</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="3" class="vacio">Ninguno en EDTA.</td></tr>{% endfor %}
+    </tbody></table></div>
+  <div class="tarjeta"><h3>En experimentación (vivos)</h3>
+    <table><thead><tr><th>Ratón</th><th>Defectos</th><th>Grupo</th></tr></thead><tbody>
+    {% for r in vivos %}<tr><td><a class="num" href="/ratones/{{ r.id }}?tab=manejo">{{ r.id }}</a></td><td><small>{{ r.izq }} / {{ r.der }}</small></td><td>{{ r.grupo }}</td></tr>
+    {% else %}<tr><td colspan="3" class="vacio">Ninguno.</td></tr>{% endfor %}
+    </tbody></table></div>
+</div>
+{% endblock %}

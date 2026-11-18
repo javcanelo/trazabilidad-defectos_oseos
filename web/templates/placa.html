@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_macros.html" import portaobjeto, ruta, campo_fecha %}
+{% block titulo %}Placa {{ p.correlativo }} · {{ p.sujeto_id }}{% endblock %}
+{% block contenido %}
+<div class="migas no-imprimir"><a href="/ratones">Ratones</a><i data-lucide="chevron-right"></i>
+  <a href="/ratones/{{ p.sujeto_id }}?tab=placas" class="num">{{ p.sujeto_id }}</a><i data-lucide="chevron-right"></i>
+  <span>Placa {{ p.serie }} {{ p.correlativo }}</span></div>
+<div class="encabezado">
+  <div><h1>Placa {{ p.correlativo }} <small>· serie {{ p.serie }}</small></h1>
+    <p><span class="chip chip-borde">{{ p.tipo_portaobjeto }}</span> <span class="chip chip-borde">{{ p.protocolo }}</span>
+       <span class="chip {{ 'chip-verde' if p.estado == 'terminada' else 'chip-naranja' if p.estado == 'perdida' else 'chip-ambar' if p.estado == 'en técnica' else 'chip-gris' }}">{{ p.estado }}</span></p></div>
+  {{ portaobjeto(p, True) }}
+</div>
+
+<div class="ficha">
+<div>
+  <div class="tarjeta">
+    <h3>Etiqueta</h3>
+    <div class="etiqueta">
+      {% if p.rotulo %}
+        {% set partes = p.rotulo.split(' | ') %}
+        <div class="etiqueta-rotulo"><div>{{ partes[0] }}</div><div>{{ partes[1] }}</div><div>{{ partes[2] }}</div><span class="corr">{{ partes[3] }}</span></div>
+      {% else %}
+        <div class="etiqueta-rotulo"><div>{{ p.sujeto_id }}</div><div><small>sin técnica todavía</small></div><div>&nbsp;</div><span class="corr">{{ p.correlativo }}</span></div>
+      {% endif %}
+      <div class="qr" title="Al escanear abre esta ficha">{{ qr|safe }}</div>
+    </div>
+    <p class="vacio no-imprimir">El código QR abre esta ficha desde el celular. <a href="javascript:window.print()">Imprimir etiqueta</a></p>
+  </div>
+
+  {% if puede('tecnica_placa') and p.tecnica != 'HE' %}
+  <div class="tarjeta registrar no-imprimir">
+    <h3><i data-lucide="pen-line"></i> Registrar técnica</h3>
+    <form method="post" action="/placas/{{ p.id }}/tecnica" class="registro">
+      <div class="opciones"><label><input type="radio" name="tipo" value="IHQ/IF" checked> IHQ/IF</label><label><input type="radio" name="tipo" value="Otra"> Otra</label></div>
+      <label>Marcador o técnica <input name="detalle" placeholder="ej. CD31" required></label>
+      <label>Resultado <select name="resultado">{% for r in resultados %}<option>{{ r }}</option>{% endfor %}</select></label>
+      <label style="flex:1 1 100%">Comentario (opcional) <textarea name="comentario"></textarea></label>
+      <label>¿Dónde queda la placa? <input name="ubicacion" value="Con {{ u.nombre }}"></label>
+      {{ campo_fecha(hoy) }}
+      <button>Guardar</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="tarjeta">
+    <h3>Historial de la placa</h3>
+    {% if historial %}<table><tbody>{% for h in historial %}<tr><td>{{ h['Fecha'] }}</td><td>{{ h['Acción'] }}</td><td><small>{{ h['Detalle'] }}</small></td><td>{{ h['Quién'] }}</td></tr>{% endfor %}</tbody></table>
+    {% else %}<p class="vacio">Sin registros propios (cortada el {{ p.fecha_corte }}).</p>{% endif %}
+  </div>
+
+  <div class="tarjeta no-imprimir">
+    <h3>Otras placas del ratón</h3>
+    <div class="portas">{% for h in hermanas %}{{ portaobjeto(h) }}{% endfor %}</div>
+  </div>
+</div>
+
+<aside class="tarjeta propiedades">
+  <h3>Dónde está</h3>
+  <p style="margin:0">{{ ruta(p.ubicacion) }}</p>
+  {% if puede('ubicacion') %}
+  <details class="no-imprimir"><summary><small>Mover placa</small></summary>
+    <form method="post" action="/placas/{{ p.id }}/mover" class="registro" style="margin-top:8px">
+      <label>A una caja (posición automática) <select name="destino">{% for c in cajas %}<option>{{ c }}</option>{% endfor %}</select></label>
+      <label>u otro lugar <input name="otro" placeholder="ej. Con Estudiante A"></label>
+      <button class="secundario">Mover</button>
+    </form></details>
+  {% endif %}
+  <hr>
+  <h3>Detalle</h3>
+  <dl>
+    <dt>Ratón</dt><dd><a class="num" href="/ratones/{{ p.sujeto_id }}">{{ p.sujeto_id }}</a></dd>
+    <dt>Bloque</dt><dd class="num">{{ p.bloque_id }}</dd>
+    <dt>Destino al cortar</dt><dd>{{ p.destino }}</dd>
+    <dt>Fecha de corte</dt><dd>{{ p.fecha_corte }}</dd>
+    <dt>Técnica</dt><dd>{{ p.tecnica or 'pendiente' }}</dd>
+    <dt>Fecha técnica</dt><dd>{{ p.fecha_tecnica or '—' }}</dd>
+    <dt>Resultado</dt><dd>{{ p.resultado or '—' }}{% if p.quien %}<br><small>{{ p.quien }}</small>{% endif %}</dd>
+  </dl>
+  {% if p.comentario %}<hr><h3>Comentario</h3><p style="margin:0">{{ p.comentario }}</p>{% endif %}
+</aside>
+</div>
+{% endblock %}

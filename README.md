@@ -1,4 +1,4 @@
-# Trazabilidad de muestras · defectos óseos
+# OsteoTraza · trazabilidad de muestras de defectos óseos
 
 Prototipo para el curso **Sistemas de Información Hospitalarios II** (Magíster en Informática Médica,
 Universidad de Chile, 2026). Construido con apoyo de IA.
@@ -15,70 +15,70 @@ información está fragmentada entre personas y registros. Ver [`docs/01_problem
 
 ## Qué hace
 
-Aplicación web con un menú de 4 secciones:
+Aplicación web con menú lateral, buscador y usuarios por rol:
 
 | Sección | Para qué |
 |---|---|
-| 🐭 Ratones | Ficha de cada ratón: paso actual, último trabajo, dónde está el taco, placas en una tira de recuadros, manejo, imagenología e historial |
-| 🧫 Manejo | Ratones en experimentación y en decalcificación; aviso **Cambiar EDTA** si pasan 3+ días sin cambio |
-| 🔬 Histología | Ratones agrupados por paso del procesamiento |
-| 🧪 Técnicas | Placas disponibles para IHQ/IF y resultados registrados |
+| Inicio | Aviso **Cambiar EDTA**, ratones por paso y actividad reciente |
+| Ratones | Ficha de cada ratón: paso actual, **linaje** (ratón → bloque → series → placas), placas, manejo, imagenología e historial |
+| Placa | Etiqueta con rótulo y **código QR** (al escanearlo abre la ficha), ubicación, resultado e historial |
+| Manejo | Ratones vivos y en decalcificación |
+| Histología | Ratones agrupados por paso del procesamiento |
+| Técnicas | Placas disponibles para IHQ/IF y resultados registrados |
+| Ubicaciones | Árbol **lugar › contenedor › posición** con lo que hay en cada uno |
 
-Estado: **etapa 4 de 5** (login por rol, registro de acciones y publicación en la nube).
-
-**Usuarios de prueba** (contraseña `demo123`): Javiera (histología), Docente responsable,
-Estudiante A, B y C.
+**Usuarios de prueba** (contraseña `demo123`): Javiera (histología), Docente responsable, Estudiante A, B y C.
 
 | Rol | Registra |
 |---|---|
 | Histología | Inclusión/reinclusión, pares de desgaste, corte de set, tinción HE, archivo, ubicaciones, técnicas |
 | Docente | Sacrificio, revisión SA, envío a histología |
-| Estudiante | Cambios de EDTA, envío a histología, técnicas en placas (IHQ/IF u otra), ubicación de placas | Plan completo en [`docs/02_arquitectura.md`](docs/02_arquitectura.md).
+| Estudiante | Cambios de EDTA, envío a histología, técnicas en placas (IHQ/IF u otra), ubicación de placas |
 
-## Cómo ejecutarlo
+## Cómo ejecutarlo en local
 
-Requiere Python 3.10 o superior.
+Requiere Python 3.11 o superior.
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate          # en Windows (PowerShell): .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -r requirements.txt
-python3 generar_datos.py           # crea data/prototipo.db con 30 ratones ficticios
-streamlit run app.py               # abre http://localhost:8501
+python3 generar_datos.py              # crea data/prototipo.db con 30 ratones ficticios
+uvicorn web.main:app --reload         # abre http://127.0.0.1:8000
 ```
+
+Si existe `.streamlit/secrets.toml` (o `.env`) con `DATABASE_URL`, usa Supabase; si no, SQLite local.
+La barra lateral indica qué base se está usando.
 
 ## Archivos
 
 | Archivo | Función |
 |---|---|
-| `app.py` | Pantallas (Streamlit). No toca la base de datos directamente. |
-| `servicios.py` | Capa de lógica: único archivo que lee/escribe la base de datos. |
-| `esquema.sql` | Tablas de la base de datos (SQLite). |
+| `web/main.py` | Servidor web (FastAPI): recibe pedidos, llama a `servicios.py` y muestra páginas. |
+| `web/templates/` | Páginas HTML. |
+| `web/static/estilo.css` | Diseño propio. |
+| `servicios.py` | Capa de lógica: único archivo que lee/escribe la base y aplica los permisos por rol. |
+| `esquema.sql` | Tablas de la base de datos. |
 | `generar_datos.py` | Genera los datos ficticios según las reglas del laboratorio. |
-| `subir_a_supabase.py` | Copia la base local a PostgreSQL en Supabase (para publicar). |
-| `data/prototipo.db` | Base de datos generada. |
+| `subir_a_supabase.py` | Copia la base local a PostgreSQL en Supabase. |
+| `render.yaml` | Configuración para publicar en Render. |
 | `docs/` | Problema, decisiones de arquitectura y sus razones. |
 | `CLAUDE.md` | Reglas para el asistente de IA usado en el desarrollo. |
 
+## Publicar (costo cero)
+
+- **Base de datos:** Supabase (PostgreSQL). Crear `.streamlit/secrets.toml` con la línea
+  `DATABASE_URL = "..."` (conexión *Session pooler*) y correr `python3 subir_a_supabase.py`.
+- **App:** Render (plan gratuito, sin tarjeta). *New → Blueprint* → elegir el repositorio (usa `render.yaml`)
+  → pegar `DATABASE_URL` cuando lo pida.
+
+Notas del plan gratuito: la app se apaga tras 15 minutos sin uso y tarda ~1 minuto en despertar;
+Supabase pausa el proyecto tras 7 días sin actividad (los datos se conservan).
+
 ## Decisiones principales
 
-- **Interfaz y lógica separadas** (`app.py` / `servicios.py`), siguiendo la idea de una capa intermedia que valida y protege los datos.
-- **Base relacional** (ratón → bloque → placa → resultado). SQLite en desarrollo; PostgreSQL (Supabase) al publicar.
-- **Costo cero**: publicación prevista en Streamlit Community Cloud + Supabase (plan gratuito, sin tarjeta).
-- **Trazabilidad**: cada acción queda como evento (quién, qué, cuándo).
-
-## Publicar (Supabase + Streamlit Community Cloud, costo cero)
-
-La app usa **SQLite local** si no hay configuración, y **PostgreSQL (Supabase)** si existe
-`DATABASE_URL` en `.streamlit/secrets.toml`. La contraseña nunca va en el código ni en GitHub.
-
-1. **Supabase**: crear proyecto → botón **Connect** → copiar la conexión **Session pooler**
-   (URI). Reemplazar `[YOUR-PASSWORD]` por la contraseña del proyecto.
-2. Crear el archivo `.streamlit/secrets.toml` con la línea `DATABASE_URL = "..."`.
-3. Subir los datos ficticios: `python3 generar_datos.py && python3 subir_a_supabase.py`
-4. **Streamlit Community Cloud** (share.streamlit.io): *Create app* → repositorio → archivo
-   `app.py` → *Advanced settings* → Python 3.12 → en **Secrets** pegar la misma línea `DATABASE_URL = "..."`.
-5. En la app, la barra lateral indica qué base se está usando.
-
-Notas del plan gratuito: la app se "duerme" tras horas sin uso (despierta al entrar) y el
-proyecto de Supabase se pausa tras 7 días sin actividad (los datos se conservan).
+- **Capas separadas:** páginas (`web/`) / lógica y permisos (`servicios.py`) / base de datos. Gracias a esto
+  se pudo cambiar de Streamlit a una web propia sin rehacer la lógica.
+- **Base relacional** (ratón → bloque → placa → resultado). SQLite en desarrollo; PostgreSQL al publicar.
+- **Costo cero:** Supabase + Render, sin tarjeta.
+- **Trazabilidad:** cada acción queda como evento (quién, qué, cuándo).

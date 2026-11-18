@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}OsteoTraza{% endblock %} · OsteoTraza</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/estilo.css">
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" defer></script>
+</head>
+<body>
+<div class="marco">
+  <aside class="lateral">
+    <a class="marca" href="/">
+      <span class="marca-icono"><i data-lucide="scan-line"></i></span>
+      <span><b>OsteoTraza</b><small>trazabilidad de muestras</small></span>
+    </a>
+    <nav>
+      {% set items = [
+        ("inicio", "/", "layout-dashboard", "Inicio"),
+        ("ratones", "/ratones", "rat", "Ratones"),
+        ("manejo", "/manejo", "flask-conical", "Manejo"),
+        ("histologia", "/histologia", "microscope", "Histología"),
+        ("tecnicas", "/tecnicas", "test-tubes", "Técnicas"),
+        ("ubicaciones", "/ubicaciones", "archive", "Ubicaciones")] %}
+      {% for clave, href, icono, texto in items %}
+        <a href="{{ href }}" class="{{ 'activo' if activo == clave }}">
+          <i data-lucide="{{ icono }}"></i><span>{{ texto }}</span>
+          {% if clave == "manejo" and n_alertas %}<em class="burbuja">{{ n_alertas }}</em>{% endif %}
+        </a>
+      {% endfor %}
+    </nav>
+    <div class="usuario">
+      <div class="avatar">{{ u.nombre[:1] }}</div>
+      <div><b>{{ u.nombre }}</b><small>{{ rol }}</small></div>
+      <a href="/salir" title="Salir"><i data-lucide="log-out"></i></a>
+    </div>
+    <p class="base-datos"><i data-lucide="database"></i> {{ "Supabase (nube)" if nube else "SQLite (local)" }} · datos ficticios</p>
+  </aside>
+
+  <main>
+    <header class="superior">
+      <form action="/buscar" class="buscador">
+        <i data-lucide="search"></i>
+        <input name="q" placeholder="Buscar ratón, rótulo o ubicación…" value="{{ q if q is defined else '' }}">
+      </form>
+    </header>
+    {% if mensaje %}
+      <div class="aviso aviso-{{ mensaje.tipo }}"><i data-lucide="{{ 'check-circle-2' if mensaje.tipo == 'ok' else 'alert-triangle' }}"></i>{{ mensaje.texto }}</div>
+    {% endif %}
+    <section class="contenido">
+      {% block contenido %}{% endblock %}
+    </section>
+  </main>
+</div>
+<script>document.addEventListener("DOMContentLoaded", () => window.lucide && lucide.createIcons());</script>
+</body>
+</html>

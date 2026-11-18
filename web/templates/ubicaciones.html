@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "_macros.html" import ruta %}
+{% block titulo %}Ubicaciones{% endblock %}
+{% block contenido %}
+<div class="encabezado"><div><h1>Ubicaciones</h1><p>Dónde está cada bloque y cada placa: lugar › contenedor › posición.</p></div></div>
+<div class="ficha" style="grid-template-columns: 320px minmax(0,1fr)">
+  <div class="tarjeta">
+    <ul class="arbol">
+      {% for lugar, contenedores in arbol.items() %}
+      <li><a class="nodo" href="?ruta={{ lugar|url }}"><i data-lucide="{{ 'user' if lugar.startswith('Con ') else 'archive' }}"></i>{{ lugar }}</a>
+        {% if contenedores.keys()|list != ['—'] %}<ul>
+          {% for c, n in contenedores.items() %}
+          <li><a class="nodo" href="?ruta={{ (lugar ~ ' › ' ~ c)|url }}"><i data-lucide="package"></i>{{ c }}
+              <small>{% if n.placa %}{{ n.placa }} placas{% endif %}{% if n.bloque %} {{ n.bloque }} bloques{% endif %}</small></a></li>
+          {% endfor %}
+        </ul>{% else %}<small> · {{ contenedores['—'].placa }} placas</small>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="tarjeta">
+    {% if sel %}
+      <h2>{{ ruta(sel) }}</h2>
+      {% if bloques %}<h3>Bloques</h3><table><tbody>{% for b in bloques %}<tr><td><a class="num" href="/ratones/{{ b.sujeto_id }}">{{ b.id }}</a></td><td>{{ b.paso }}</td><td><small>{{ ruta(b.ubicacion) }}</small></td></tr>{% endfor %}</tbody></table>{% endif %}
+      {% if placas %}<h3 style="margin-top:14px">Placas ({{ placas|length }})</h3>
+      <div class="tabla-scroll"><table><thead><tr><th>Posición</th><th>Ratón</th><th>Placa</th><th>Técnica</th><th>Estado</th></tr></thead><tbody>
+      {% for p in placas %}<tr><td><small>{{ p.ubicacion.split(' › ')[-1] }}</small></td><td><a class="num" href="/ratones/{{ p.sujeto_id }}">{{ p.sujeto_id }}</a></td>
+        <td><a href="/placas/{{ p.id }}">{{ p.serie }} {{ p.correlativo }}</a></td><td>{{ p.tecnica or '—' }}</td><td>{{ p.estado }}</td></tr>{% endfor %}
+      </tbody></table></div>{% endif %}
+      {% if not bloques and not placas %}<p class="vacio">Vacío.</p>{% endif %}
+    {% else %}<p class="vacio">Elige un lugar o contenedor a la izquierda.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

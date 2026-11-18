@@ -32,7 +32,15 @@ USUARIOS = [(1, "Javiera", "histologia"), (2, "Docente responsable", "docente"),
             (3, "Estudiante A", "estudiante"), (4, "Estudiante B", "estudiante"),
             (5, "Estudiante C", "estudiante")]
 CONTENIDOS = ["vacío", "células 200.000", "andamio", "andamio + células 200.000"]
-CAJAS = ["Caja de placas 1", "Caja de placas 2", "Caja de placas 3"]
+# Ubicaciones jerárquicas: "Lugar › Contenedor › Posición"
+CAJAS = [f"Gaveta de placas {g} › Caja {n}" for g, ns in (("A", (1, 2, 3)), ("B", (4, 5, 6))) for n in ns]
+_POS = {}
+
+
+def up(caja):
+    """Siguiente posición libre en una caja de placas."""
+    _POS[caja] = _POS.get(caja, 0) + 1
+    return f"{caja} › Pos {_POS[caja]}"
 
 # Paso de cada ratón (n = 1..30). El resto: "Placas en técnicas".
 PLAN = {1: "vivo", 2: "vivo", 3: "decalcificando", 4: "decalcificando", 5: "decalcificando",
@@ -181,8 +189,9 @@ def main():
         paso = plan
         insertar(con, "bloque", id=bid, sujeto_id=sid, forma_llegada=forma, fecha_recepcion=iso(f_rec),
                  paso=paso, estado="en lab",
-                 ubicacion="Archivo histología" if paso == "Archivado" else
-                           ("Frasco EDTA, mesón histología" if paso == "Recepción" else "Gaveta de bloques"))
+                 ubicacion="Archivo histología › Caja de archivo 1" if paso == "Archivado" else
+                           ("Mesón histología › Frasco EDTA" if paso == "Recepción" else
+                            f"Gaveta de bloques › Fila {random.randint(1, 4)}"))
         evento(con, 1, "bloque", bid, f"Recepción en histología ({forma})", f_rec)
         if paso in ("Recepción", "Reinclusión"):
             continue
@@ -200,10 +209,10 @@ def main():
                     corr += 1
                     if corr % 2 == 0:
                         f_he = fecha + timedelta(days=1)
-                        placa(con, bid, "desgaste", corr, "normal", "evaluación", "HE", fecha, caja,
+                        placa(con, bid, "desgaste", corr, "normal", "evaluación", "HE", fecha, up(caja),
                               "HE", f_he, rotulo(sid, "HE", f_he, corr), "terminada")
                     else:
-                        placa(con, bid, "desgaste", corr, "normal", "evaluación", "HE", fecha, caja)
+                        placa(con, bid, "desgaste", corr, "normal", "evaluación", "HE", fecha, up(caja))
             evento(con, 1, "bloque", bid, f"Desgaste ronda {ronda}: corte de par y HE", fecha)
             f_rev = fecha + timedelta(days=random.randint(3, 10))
             if paso == "Esperando revisión SA" and ronda == rondas:
@@ -230,10 +239,10 @@ def main():
                 corr += 1
                 if destino == "HE":
                     if corr in he_tenidas and tenir:
-                        placa(con, bid, "set", corr, "normal", protocolo, "HE", f_set, caja,
+                        placa(con, bid, "set", corr, "normal", protocolo, "HE", f_set, up(caja),
                               "HE", f_he, rotulo(sid, "HE", f_he, corr), "terminada")
                     else:
-                        placa(con, bid, "set", corr, "normal", protocolo, "HE", f_set, caja)
+                        placa(con, bid, "set", corr, "normal", protocolo, "HE", f_set, up(caja))
                     continue
                 if tenir and random.random() < 0.18:
                     e = random.choice([3, 4, 5])
@@ -255,7 +264,7 @@ def main():
                              estado_final=final, comentario=coment, fecha=iso(f_tec))
                     evento(con, e, "placa", pid, f"Técnica: {tec}", f_tec, f"{final}. {coment}".strip())
                 else:
-                    placa(con, bid, "set", corr, "cargado", protocolo, "IHQ/IF", f_set, caja)
+                    placa(con, bid, "set", corr, "cargado", protocolo, "IHQ/IF", f_set, up(caja))
         if tenir:
             evento(con, 1, "bloque", bid, f"Tinción HE placas {sorted(he_tenidas)}", f_he)
 
