@@ -1,4 +1,4 @@
-# OsteoTraza · trazabilidad de muestras de defectos óseos
+# OsteoTraza - trazabilidad de muestras de defectos óseos
 
 Prototipo para el curso **Sistemas de Información Hospitalarios II** (Magíster en Informática Médica,
 Universidad de Chile, 2026). Construido con apoyo de IA.

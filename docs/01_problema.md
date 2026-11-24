@@ -5,16 +5,17 @@ distintos tratamientos para comparar su efecto entre condiciones experimentales.
 pasa por varias etapas: tratamiento, imagenología (microCT), procesamiento histológico
 (inclusión, corte y tinción) y después técnicas como inmunofluorescencia. Hoy la información
 de cada etapa está fragmentada entre distintas personas y registros, y es difícil saber en qué
-va cada muestra y a qué técnica se destina cada placa.
+va cada muestra, en qué laboratorio está y a qué técnica se destina cada placa.
 
 Propuesta: una aplicación web, accesible también desde el celular, que reúna en un solo lugar
 la ficha de cada sujeto, sus muestras y placas, la técnica asignada a cada placa con su rótulo,
 sus imágenes (histología y microCT) y un historial de quién hizo qué y cuándo. La docente
-responsable, los estudiantes y la responsable de histología acceden con su usuario, y cada
-uno registra la etapa que le corresponde.
+responsable, la tecnóloga médica (TM) de histología y los estudiantes acceden con su usuario, y
+cada uno registra la etapa que le corresponde.
 
 Datos: los sujetos son ratones, pero la investigación no está publicada, por lo que el
-prototipo usa solo datos ficticios.
+prototipo usa datos ficticios. La única excepción es una vista previa de microCT de ejemplo,
+sin ningún identificador, que se usa solo en la demo local y no se sube al repositorio.
 
 ## Por qué es transferible a pacientes
 
@@ -25,12 +26,13 @@ prototipo usa solo datos ficticios.
 | MicroCT | Estudio radiológico (TC) |
 | Bloque y placas | Bloques y placas de una biopsia en anatomía patológica |
 | Técnicas posteriores (IHQ/IF) | Técnicas complementarias (IHQ) |
+| Laboratorio donde está la muestra | Servicio o unidad donde está la biopsia |
 | Historial de eventos | Trazabilidad de la muestra |
 
 Elegí un problema de investigación por dos razones: es parte de mi trabajo diario, no solo la
 clínica, y supuse que la mayoría elegiría un problema clínico. Además, la parte del proyecto que
 me toca, el procesamiento histológico, es prácticamente lo mismo que se hace en un laboratorio de
-anatomía patológica: recibir, procesar, cortar, teñir, rotular y ubicar cada muestra.
+anatomía patológica: recibir, fijar, procesar, cortar, teñir, rotular y ubicar cada muestra.
 
 La investigación suele ser más desordenada que la clínica. No hay estándares de acreditación ni
 prestaciones que cobrar, así que cada laboratorio registra como puede: cuadernos, planillas sueltas
@@ -43,8 +45,7 @@ En anatomía patológica, la trazabilidad es crítica: saber en qué etapa está
 cuándo y quién la tiene. Perder una biopsia es un evento centinela. Además, muchos protocolos
 dependen del tiempo. Si el sistema dice que una muestra entró a formalina ayer cuando fue hoy,
 puedo asumir que ya está fijada y no lo está. Si alguien olvida revisar su cuaderno o se ausenta
-por licencia, un tejido puede quedar días de más en decalcificación ácida y volverse no
-diagnosticable.
+por licencia, un tejido puede quedar días de más en decalcificación y volverse no diagnosticable.
 
 Por eso, aunque el prototipo nace en investigación con ratones, su lógica es transferible a un
 servicio de anatomía patológica y a otros procesos con muestras, plazos y muchas personas, como
