@@ -15,3 +15,5 @@ __pycache__/
 # Sistema
 .DS_Store
 Thumbs.db
+web/static/microct_ejemplo.png
+*:Zone.Identifier
