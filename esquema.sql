@@ -2,7 +2,7 @@
 CREATE TABLE usuario (
     id INTEGER PRIMARY KEY,
     nombre TEXT NOT NULL,
-    rol TEXT NOT NULL CHECK (rol IN ('histologia', 'docente', 'estudiante')),
+    rol TEXT NOT NULL CHECK (rol IN ('docente', 'tm', 'estudiante', 'admin')),
     clave_hash TEXT                    -- contraseña cifrada (nunca en texto plano)
 );
 
@@ -68,7 +68,7 @@ CREATE TABLE placa (
     fecha_tecnica TEXT,
     rotulo TEXT,                       -- nace al hacer la técnica; NULL antes
     ubicacion TEXT,                    -- dónde está físicamente
-    estado TEXT CHECK (estado IN ('disponible', 'en técnica', 'terminada', 'perdida')),
+    estado TEXT CHECK (estado IN ('disponible', 'en técnica', 'terminada', 'inutilizable')),
     UNIQUE (bloque_id, serie, correlativo)
 );
 
@@ -77,7 +77,7 @@ CREATE TABLE resultado_placa (
     placa_id INTEGER NOT NULL REFERENCES placa(id),
     usuario_id INTEGER REFERENCES usuario(id),
     tecnica_realizada TEXT,
-    estado_final TEXT,                 -- realizada, con observaciones, en proceso, repetir, perdida
+    estado_final TEXT,                 -- realizada, con observaciones, en proceso, repetir, inutilizable
     comentario TEXT,
     fecha TEXT
 );
