@@ -20,19 +20,20 @@ ES_POSTGRES = bool(DATABASE_URL)
 _lectura_pg = None
 DIAS_CAMBIO_EDTA = 3  # aviso si pasan más días que esto sin cambiar EDTA
 
-PASOS_MANEJO = ["En experimentación", "Decalcificación"]
-PASOS_HISTO = ["Recepción", "Reinclusión", "Desgaste", "Esperando revisión SA",
+PASOS_MANEJO = ["En experimentación", "Fijación en formalina", "Decalcificación"]
+PASOS_HISTO = ["Recepción", "Reinclusión", "Desgaste", "Esperando revisión",
                "Corte de set", "Tinción HE", "Placas en técnicas", "Archivado"]
 PASOS = PASOS_MANEJO + PASOS_HISTO
 
 # Lo que probablemente viene después de cada paso (no todos los ratones pasan por todo).
 SIGUIENTE = {
-    "En experimentación": "Sacrificio y decalcificación",
+    "En experimentación": "Sacrificio y fijación en formalina",
+    "Fijación en formalina": "Inicio de decalcificación",
     "Decalcificación": "Envío a histología",
     "Recepción": "Inclusión o reinclusión",
     "Reinclusión": "Desgaste",
-    "Desgaste": "Revisión SA",
-    "Esperando revisión SA": "Profundizar desgaste o corte de set (según SA)",
+    "Desgaste": "Revisión",
+    "Esperando revisión": "Profundizar desgaste o corte de set",
     "Corte de set": "Tinción HE",
     "Tinción HE": "Placas a técnicas",
     "Placas en técnicas": "Archivo",
@@ -90,6 +91,7 @@ _RATONES = """
            s.fecha_sacrificio, b.id AS bloque, b.paso, b.ubicacion AS ubic_bloque,
            (SELECT COUNT(*) FROM placa p WHERE p.bloque_id = b.id AND p.tecnica = 'HE') AS he,
            (SELECT COUNT(*) FROM placa p WHERE p.bloque_id = b.id) AS placas,
+           (SELECT COUNT(*) FROM decalcificacion d WHERE d.sujeto_id = s.id) AS n_dec,
            (SELECT e.accion || ' · ' || e.fecha FROM evento e
              WHERE (e.entidad='sujeto' AND e.entidad_id = s.id)
                 OR (e.entidad='bloque' AND e.entidad_id = b.id)
@@ -102,22 +104,30 @@ def _paso(fila):
     if pd.isna(fila["fecha_sacrificio"]):
         return "En experimentación"
     if pd.isna(fila["bloque"]):
-        return "Decalcificación"
+        return "Decalcificación" if fila["n_dec"] else "Fijación en formalina"
     return fila["paso"]
 
 
+LABS = ["Bioterio", "Lab. A", "Lab. B"]
+ORDENES = {"Número": "id", "Paso": "orden_paso", "Último trabajo (reciente primero)": "ultimo"}
+
+
 def _ubicacion(fila):
-    if pd.isna(fila["fecha_sacrificio"]):
-        return "Bioterio (vivo)"
-    if pd.isna(fila["bloque"]):
-        return "En EDTA (manejo)"
+    if pd.isna(fila["fecha_sacrificio"]) or pd.isna(fila["bloque"]):
+        return "Bioterio"
     return fila["ubic_bloque"]
 
 
-def ratones(busqueda="", paso="Todos"):
+def ratones(busqueda="", paso="Todos", orden="Número"):
     df = _q(_RATONES + " ORDER BY s.id")
     df["paso_actual"] = df.apply(_paso, axis=1)
     df["donde"] = df.apply(_ubicacion, axis=1)
+    df["orden_paso"] = df["paso_actual"].map(PASOS.index)
+    df["fecha_ultimo"] = df["ultimo"].fillna("").str.split(" · ").str[-1]
+    if orden == "Último trabajo (reciente primero)":
+        df = df.sort_values("fecha_ultimo", ascending=False)
+    elif orden == "Paso":
+        df = df.sort_values(["orden_paso", "id"])
     if busqueda:
         df = df[df["id"].str.contains(busqueda.strip())]
     if paso != "Todos":
@@ -166,6 +176,13 @@ def alertas_edta():
     return df.sort_values("dias", ascending=False)
 
 
+def alertas_histologia():
+    """Pendientes de histología: revisiones por hacer y sets indicados sin cortar."""
+    df = ratones()
+    return {"revision": df[df["paso_actual"] == "Esperando revisión"]["id"].tolist(),
+            "corte": df[df["paso_actual"] == "Corte de set"]["id"].tolist()}
+
+
 # ---------------- Placas ----------------
 def placas(sid):
     df = _q("""
@@ -199,18 +216,20 @@ def placas_para_tecnicas():
                SUM(CASE WHEN p.tipo_portaobjeto = 'normal' THEN 1 ELSE 0 END) AS "Normales disponibles",
                MIN(p.ubicacion) AS "Ubicación"
         FROM placa p JOIN bloque b ON b.id = p.bloque_id
-        WHERE p.serie = 'set' AND p.tecnica IS NULL AND b.paso = 'Placas en técnicas'
+        WHERE p.serie = 'set' AND p.tecnica IS NULL AND p.estado = 'disponible'
+          AND b.paso IN ('Placas en técnicas', 'Archivado')
         GROUP BY b.sujeto_id ORDER BY b.sujeto_id""")
 
 
-def resultados_recientes():
-    return _q("""
+def resultados_recientes(resultado="Todos"):
+    df = _q("""
         SELECT r.fecha AS "Fecha", b.sujeto_id AS "Ratón", p.correlativo AS "Placa",
                r.tecnica_realizada AS "Técnica", r.estado_final AS "Resultado",
                r.comentario AS "Comentario", u.nombre AS "Quién"
         FROM resultado_placa r JOIN placa p ON p.id = r.placa_id
         JOIN bloque b ON b.id = p.bloque_id LEFT JOIN usuario u ON u.id = r.usuario_id
         ORDER BY r.fecha DESC""")
+    return df if resultado == "Todos" else df[df["Resultado"] == resultado]
 
 
 # ---------------- Historial ----------------
@@ -241,19 +260,23 @@ def procesamiento_previo(sid):
 
 # Qué puede registrar cada rol. La pantalla oculta lo que no corresponde,
 # pero la regla se valida AQUÍ (capa intermedia), no en la pantalla.
+TODAS = {"ingresar_raton", "sacrificio", "cambio_edta", "enviar_histologia", "paso_histologia", "revision_sa",
+         "ubicacion", "tecnica_placa"}
 PERMISOS = {
-    "histologia": {"cambio_edta", "enviar_histologia", "paso_histologia", "ubicacion", "tecnica_placa"},
-    "docente": {"sacrificio", "revision_sa", "enviar_histologia"},
+    # Según cómo se trabaja hoy en el laboratorio:
+    "docente": {"ingresar_raton", "sacrificio", "revision_sa", "ubicacion", "cambio_edta", "tecnica_placa"},
+    "tm": {"paso_histologia", "revision_sa", "tecnica_placa", "ubicacion"},
     "estudiante": {"cambio_edta", "enviar_histologia", "tecnica_placa", "ubicacion"},
+    "admin": TODAS,
 }
-NOMBRE_ROL = {"histologia": "Histología", "docente": "Docente", "estudiante": "Estudiante"}
+NOMBRE_ROL = {"docente": "Docente", "tm": "TM", "estudiante": "Estudiante", "admin": "Admin"}
 
 PROTOCOLOS = {
     "estándar": ([("HE", 3), ("IHQ/IF", 3), ("HE", 3), ("IHQ/IF", 3), ("HE", 3)], {1, 8, 15}),
     "estrella": ([("IHQ/IF", 4), ("HE", 4)] * 2 + [("IHQ/IF", 4), ("HE", 3)], {5, 21}),
     "corazón": ([("IHQ/IF", 4), ("HE", 4)] * 4 + [("IHQ/IF", 4), ("HE", 3)], {5, 21, 39}),
 }
-RESULTADOS = ["realizada", "realizada con observaciones", "en proceso", "repetir", "perdida"]
+RESULTADOS = ["realizada", "realizada con observaciones", "en proceso", "repetir"]
 
 
 def cifrar(clave, uid):
@@ -262,6 +285,14 @@ def cifrar(clave, uid):
 
 def nombres_usuarios():
     return _q("SELECT nombre FROM usuario ORDER BY id")["nombre"].tolist()
+
+
+def usuarios_login():
+    """Para el login: el rol primero y, si hay varios con el mismo rol, el nombre."""
+    df = _q("SELECT nombre, rol FROM usuario ORDER BY id")
+    return [{"nombre": f["nombre"],
+             "texto": f["nombre"] if f["nombre"].startswith(NOMBRE_ROL.get(f["rol"], f["rol"]))
+             else f'{NOMBRE_ROL.get(f["rol"], f["rol"])} ({f["nombre"]})'} for f in df.to_dict("records")]
 
 
 def autenticar(nombre, clave):
@@ -329,13 +360,61 @@ def _exigir_paso(con, bid, *pasos):
         raise ValueError(f"El bloque está en «{paso}»; esta acción corresponde a: {', '.join(pasos)}.")
 
 
+# ---------------- Ingreso y edición de ratones ----------------
+CONTENIDOS = ["vacío", "células 200.000", "andamio", "andamio + células 200.000"]
+CAMPOS_RATON = ["sexo", "fecha_nacimiento", "fecha_cirugia", "contenido_defecto_izq", "contenido_defecto_der",
+                "tiempo_experimentacion", "anestesia", "comentarios"]
+
+
+def _validar_raton(d):
+    if not d.get("fecha_cirugia"):
+        raise ValueError("La fecha de cirugía es obligatoria.")
+    if not d.get("contenido_defecto_izq") or not d.get("contenido_defecto_der"):
+        raise ValueError("Indica el contenido de ambos defectos.")
+    d["grupo"] = "control" if d["contenido_defecto_izq"] == d["contenido_defecto_der"] == "vacío" else "experimental"
+    return d
+
+
+def ingresar_raton(u, sid, datos):
+    _exigir(u, "ingresar_raton")
+    sid = sid.strip()
+    if not sid.isdigit():
+        raise ValueError("El número del ratón debe tener solo dígitos.")
+    d = _validar_raton({k: (datos.get(k) or None) for k in CAMPOS_RATON})
+    with _Escritura() as con:
+        if con.execute("SELECT 1 FROM sujeto WHERE id = ?", (sid,)).fetchone():
+            raise ValueError(f"Ya existe el ratón {sid}.")
+        cols = ["id"] + CAMPOS_RATON + ["grupo"]
+        con.execute(f"INSERT INTO sujeto ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                    [sid] + [d[k] for k in CAMPOS_RATON] + [d["grupo"]])
+        _evento(con, u, "sujeto", sid, "Cirugía: defectos bilaterales", date.fromisoformat(d["fecha_cirugia"]),
+                f"izq.: {d['contenido_defecto_izq']} / der.: {d['contenido_defecto_der']}")
+    return sid
+
+
+def editar_raton(u, sid, datos):
+    _exigir(u, "ingresar_raton")
+    d = _validar_raton({k: (datos.get(k) or None) for k in CAMPOS_RATON})
+    with _Escritura() as con:
+        con.execute(f"UPDATE sujeto SET {', '.join(k + ' = ?' for k in CAMPOS_RATON)}, grupo = ? WHERE id = ?",
+                    [d[k] for k in CAMPOS_RATON] + [d["grupo"], sid])
+        _evento(con, u, "sujeto", sid, "Datos del ratón editados", date.today())
+
+
 # ---------------- Manejo ----------------
 def registrar_sacrificio(u, sid, fecha):
     _exigir(u, "sacrificio")
     with _Escritura() as con:
         con.execute("UPDATE sujeto SET fecha_sacrificio = ? WHERE id = ?", (fecha.isoformat(), sid))
-        con.execute("INSERT INTO decalcificacion (sujeto_id, fecha_inicio) VALUES (?,?)", (sid, fecha.isoformat()))
         _evento(con, u, "sujeto", sid, "Sacrificio y fijación en formalina", fecha)
+
+
+def iniciar_decalcificacion(u, sid, fecha):
+    _exigir(u, "cambio_edta")
+    with _Escritura() as con:
+        if con.execute("SELECT 1 FROM decalcificacion WHERE sujeto_id = ?", (sid,)).fetchone():
+            raise ValueError("Este ratón ya tiene decalcificación registrada.")
+        con.execute("INSERT INTO decalcificacion (sujeto_id, fecha_inicio) VALUES (?,?)", (sid, fecha.isoformat()))
         _evento(con, u, "sujeto", sid, "Inicio decalcificación EDTA", fecha)
 
 
@@ -361,7 +440,7 @@ def enviar_a_histologia(u, sid, fecha, forma):
                         (fecha.isoformat(), sid))
             _evento(con, u, "sujeto", sid, "Fin decalcificación", fecha)
         paso = "Recepción" if forma == "cabeza en EDTA" else "Reinclusión"
-        ubic = "Mesón histología › Frasco EDTA" if forma == "cabeza en EDTA" else "Mesón histología › Bandeja de recepción"
+        ubic = "Lab. A"
         con.execute("INSERT INTO bloque (id, sujeto_id, forma_llegada, fecha_recepcion, paso, estado, ubicacion)"
                     " VALUES (?,?,?,?,?,?,?)", (bid, sid, forma, fecha.isoformat(), paso, "en lab", ubic))
         _evento(con, u, "bloque", bid, f"Recepción en histología ({forma})", fecha)
@@ -375,48 +454,60 @@ def registrar_inclusion(u, bid, fecha):
         paso, sid = _bloque(con, bid)
         con.execute("UPDATE decalcificacion SET fecha_fin = ? WHERE sujeto_id = ? AND fecha_fin IS NULL",
                     (fecha.isoformat(), sid))
-        con.execute("UPDATE bloque SET fecha_reinclusion = ?, paso = 'Desgaste', ubicacion = 'Gaveta de bloques › Fila 1'"
+        con.execute("UPDATE bloque SET fecha_reinclusion = ?, paso = 'Desgaste', ubicacion = 'Lab. A'"
                     " WHERE id = ?", (fecha.isoformat(), bid))
         _evento(con, u, "bloque", bid, "Inclusión en casete" if paso == "Recepción" else "Reinclusión en casete", fecha)
 
 
-def cortar_par_desgaste(u, bid, fecha, caja):
-    """Corta un par: la impar queda sin teñir, la par se tiñe con HE. Se guardan en `caja`."""
+def cortar_desgaste(u, bid, fecha, n):
+    """Corta N placas de desgaste (sin teñir). El bloque sigue en Desgaste hasta teñir."""
     _exigir(u, "paso_histologia")
+    n = int(n)
+    if not 1 <= n <= 20:
+        raise ValueError("Indica cuántas placas cortaste (1 a 20).")
     with _Escritura() as con:
         _exigir_paso(con, bid, "Desgaste")
-        posiciones = _posiciones_libres(con, caja, 2)
         ultimo = con.execute("SELECT COALESCE(MAX(correlativo), 0) FROM placa WHERE bloque_id = ? AND serie = 'desgaste'",
                              (bid,)).fetchone()[0]
-        for corr in (ultimo + 1, ultimo + 2):
-            he = corr % 2 == 0
+        for corr in range(ultimo + 1, ultimo + n + 1):
             con.execute("INSERT INTO placa (bloque_id, serie, correlativo, tipo_portaobjeto, protocolo, destino,"
-                        " tecnica, fecha_corte, fecha_tecnica, rotulo, ubicacion, estado)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (bid, "desgaste", corr, "normal", "evaluación", "HE", "HE" if he else None,
-                         fecha.isoformat(), fecha.isoformat() if he else None,
-                         _rotulo(con, bid, "HE", fecha, corr) if he else None, posiciones.pop(0),
-                         "terminada" if he else "disponible"))
-        con.execute("UPDATE bloque SET paso = 'Esperando revisión SA' WHERE id = ?", (bid,))
-        _evento(con, u, "bloque", bid, f"Desgaste: corte de par {ultimo + 1}-{ultimo + 2} y HE de la {ultimo + 2}", fecha)
+                        " fecha_corte, ubicacion, estado) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (bid, "desgaste", corr, "normal", "evaluación", "HE", fecha.isoformat(), "Lab. A", "disponible"))
+        _evento(con, u, "bloque", bid, f"Desgaste: corte de {n} placa(s) ({ultimo + 1}-{ultimo + n})", fecha)
+
+
+def tenir_desgaste(u, bid, fecha, correlativos):
+    """Tiñe con HE las placas de desgaste elegidas y deja el bloque esperando revisión."""
+    _exigir(u, "paso_histologia")
+    if not correlativos:
+        raise ValueError("Marca al menos una placa para teñir.")
+    with _Escritura() as con:
+        _exigir_paso(con, bid, "Desgaste")
+        for corr in correlativos:
+            con.execute("UPDATE placa SET tecnica = 'HE', fecha_tecnica = ?, rotulo = ?, estado = 'terminada'"
+                        " WHERE bloque_id = ? AND serie = 'desgaste' AND correlativo = ? AND tecnica IS NULL",
+                        (fecha.isoformat(), _rotulo(con, bid, "HE", fecha, corr), bid, corr))
+        con.execute("UPDATE bloque SET paso = 'Esperando revisión' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, f"Desgaste: HE de placa(s) {sorted(correlativos)}", fecha)
 
 
 def registrar_revision_sa(u, bid, fecha, decision, protocolo=None):
     _exigir(u, "revision_sa")
-    destino = {"Profundizar desgaste": "Desgaste", "Indicar set de corte": "Corte de set", "Archivar": "Archivado"}
+    destino = {"Profundizar desgaste": "Desgaste", "Indicar set de corte": "Corte de set"}
+    if decision not in destino:
+        raise ValueError("Decisión no válida.")
     with _Escritura() as con:
-        _exigir_paso(con, bid, "Esperando revisión SA")
+        _exigir_paso(con, bid, "Esperando revisión")
         con.execute("UPDATE bloque SET paso = ? WHERE id = ?", (destino[decision], bid))
         detalle = decision + (f": set {protocolo}" if decision == "Indicar set de corte" and protocolo else "")
-        _evento(con, u, "bloque", bid, "Revisión SA", fecha, detalle)
+        _evento(con, u, "bloque", bid, "Revisión", fecha, detalle)
 
 
-def cortar_set(u, bid, fecha, protocolo, caja):
+def cortar_set(u, bid, fecha, protocolo):
     _exigir(u, "paso_histologia")
     grupos, _ = PROTOCOLOS[protocolo]
     with _Escritura() as con:
         _exigir_paso(con, bid, "Corte de set")
-        posiciones = _posiciones_libres(con, caja, sum(n for _, n in grupos))
         corr = 0
         for destino, cantidad in grupos:
             for _ in range(cantidad):
@@ -424,7 +515,7 @@ def cortar_set(u, bid, fecha, protocolo, caja):
                 con.execute("INSERT INTO placa (bloque_id, serie, correlativo, tipo_portaobjeto, protocolo, destino,"
                             " fecha_corte, ubicacion, estado) VALUES (?,?,?,?,?,?,?,?,?)",
                             (bid, "set", corr, "normal" if destino == "HE" else "cargado", protocolo, destino,
-                             fecha.isoformat(), posiciones.pop(0), "disponible"))
+                             fecha.isoformat(), "Lab. A", "disponible"))
         con.execute("UPDATE bloque SET paso = 'Tinción HE' WHERE id = ?", (bid,))
         _evento(con, u, "bloque", bid, f"Corte set {protocolo} ({corr} placas)", fecha)
 
@@ -447,8 +538,9 @@ def tenir_he_set(u, bid, fecha):
 def archivar(u, bid, fecha):
     _exigir(u, "paso_histologia")
     with _Escritura() as con:
-        con.execute("UPDATE bloque SET paso = 'Archivado', ubicacion = 'Archivo histología › Caja de archivo 1' WHERE id = ?", (bid,))
-        _evento(con, u, "bloque", bid, "Archivar / cerrar trabajo", fecha)
+        _exigir_paso(con, bid, "Placas en técnicas")
+        con.execute("UPDATE bloque SET paso = 'Archivado' WHERE id = ?", (bid,))
+        _evento(con, u, "bloque", bid, "Archivado (set terminado)", fecha)
 
 
 def mover_bloque(u, bid, ubicacion, fecha):
@@ -459,80 +551,101 @@ def mover_bloque(u, bid, ubicacion, fecha):
 
 
 # ---------------- Placas ----------------
-def registrar_tecnica(u, pid, fecha, tecnica, resultado, comentario, ubicacion):
+def registrar_tecnica(u, pid, fecha, tecnica, resultado, comentario):
     _exigir(u, "tecnica_placa")
     if resultado not in RESULTADOS:
         raise ValueError("Resultado no válido.")
     if not tecnica.strip():
         raise ValueError("Indica qué técnica se hizo.")
     with _Escritura() as con:
-        fila = con.execute("SELECT bloque_id, correlativo, tecnica FROM placa WHERE id = ?", (pid,)).fetchone()
+        fila = con.execute("SELECT bloque_id, correlativo, tecnica, estado FROM placa WHERE id = ?", (pid,)).fetchone()
         if not fila:
             raise ValueError("Placa no encontrada.")
-        bid, corr, actual = fila
+        bid, corr, actual, estado_actual = fila
+        if estado_actual == "inutilizable":
+            raise ValueError("Esta placa está marcada como inutilizable.")
         if actual == "HE":
             raise ValueError("Esta placa ya está teñida con HE.")
-        estado = {"perdida": "perdida", "en proceso": "en técnica"}.get(resultado, "terminada")
-        con.execute("UPDATE placa SET tecnica = ?, fecha_tecnica = ?, rotulo = ?, estado = ?, ubicacion = ?"
+        estado = "en técnica" if resultado == "en proceso" else "terminada"
+        con.execute("UPDATE placa SET tecnica = ?, fecha_tecnica = ?, rotulo = ?, estado = ?"
                     " WHERE id = ?", (tecnica, fecha.isoformat(), _rotulo(con, bid, tecnica, fecha, corr),
-                                      estado, "Perdida" if resultado == "perdida" else ubicacion, pid))
+                                      estado, pid))
         con.execute("INSERT INTO resultado_placa (placa_id, usuario_id, tecnica_realizada, estado_final, comentario, fecha)"
                     " VALUES (?,?,?,?,?,?)", (pid, u["id"], tecnica, resultado, comentario, fecha.isoformat()))
         _evento(con, u, "placa", pid, f"Técnica: {tecnica}", fecha, f"{resultado}. {comentario}".strip())
 
 
+def marcar_inutilizable(u, pid, fecha, comentario=""):
+    """La placa queda registrada pero ya no se puede usar (rota, perdida, desprendida...)."""
+    _exigir(u, "tecnica_placa")
+    with _Escritura() as con:
+        if not con.execute("SELECT 1 FROM placa WHERE id = ?", (pid,)).fetchone():
+            raise ValueError("Placa no encontrada.")
+        con.execute("UPDATE placa SET estado = 'inutilizable' WHERE id = ?", (pid,))
+        con.execute("INSERT INTO resultado_placa (placa_id, usuario_id, tecnica_realizada, estado_final, comentario, fecha)"
+                    " VALUES (?,?,?,?,?,?)", (pid, u["id"], None, "inutilizable", comentario, fecha.isoformat()))
+        _evento(con, u, "placa", pid, "Placa inutilizable", fecha, comentario)
+
+
+def mover_varios(u, placas_ids, bloques_ids, ubicacion, fecha):
+    """Mueve varias placas y/o bloques a la vez (sin cambiar de etapa)."""
+    _exigir(u, "ubicacion")
+    if ubicacion not in LABS:
+        raise ValueError("Laboratorio no válido.")
+    if not placas_ids and not bloques_ids:
+        raise ValueError("Marca al menos una placa o bloque.")
+    with _Escritura() as con:
+        for pid in placas_ids:
+            con.execute("UPDATE placa SET ubicacion = ? WHERE id = ?", (ubicacion, pid))
+            _evento(con, u, "placa", pid, "Cambio de ubicación de la placa", fecha, ubicacion)
+        for bid in bloques_ids:
+            con.execute("UPDATE bloque SET ubicacion = ? WHERE id = ?", (ubicacion, bid))
+            _evento(con, u, "bloque", bid, "Cambio de ubicación del bloque", fecha, ubicacion)
+
+
+def movimientos_placa(pid):
+    return _q("""SELECT e.fecha AS "Fecha", e.detalle AS "Detalle", u.nombre AS "Quién"
+                 FROM evento e LEFT JOIN usuario u ON u.id = e.usuario_id
+                 WHERE e.entidad = 'placa' AND e.entidad_id = ? AND e.accion LIKE 'Cambio de ubicación%'
+                 ORDER BY e.fecha""", (str(pid),))
+
+
 def mover_placa(u, pid, ubicacion, fecha):
-    """Si `ubicacion` es una caja conocida, se asigna la siguiente posición libre."""
     _exigir(u, "ubicacion")
     if not ubicacion.strip():
         raise ValueError("Indica la nueva ubicación.")
     with _Escritura() as con:
-        if ubicacion in cajas_placas():
-            ubicacion = _posiciones_libres(con, ubicacion, 1)[0]
         con.execute("UPDATE placa SET ubicacion = ? WHERE id = ?", (ubicacion, pid))
         _evento(con, u, "placa", pid, "Cambio de ubicación de la placa", fecha, ubicacion)
 
 
 # =====================================================================
-# Ubicaciones jerárquicas ("Lugar › Contenedor › Posición"), linaje y búsqueda
+# Ubicaciones (solo laboratorio) y búsqueda
 # =====================================================================
-SEP = " › "
-
-
-def _posiciones_libres(con, caja, n):
-    usadas = [r[0] for r in con.execute("SELECT ubicacion FROM placa WHERE ubicacion LIKE ?",
-                                         (caja + SEP + "Pos %",)).fetchall()]
-    ultima = max([int(u.rsplit("Pos ", 1)[1]) for u in usadas if u.rsplit("Pos ", 1)[1].isdigit()] or [0])
-    return [f"{caja}{SEP}Pos {ultima + i}" for i in range(1, n + 1)]
-
-
-def cajas_placas():
-    """Cajas de placas existentes (la ruta sin la posición)."""
-    rutas = _q("SELECT DISTINCT ubicacion FROM placa WHERE ubicacion LIKE ?", ("%" + SEP + "Pos %",))["ubicacion"]
-    return sorted({r.rsplit(SEP, 1)[0] for r in rutas})
-
 
 def arbol_ubicaciones():
-    """{lugar: {contenedor: cantidad}} para bloques y placas."""
+    """Conteo por laboratorio: ratones (Bioterio), bloques y placas."""
     filas = _q("""SELECT ubicacion, 'placa' AS tipo FROM placa WHERE ubicacion IS NOT NULL
                   UNION ALL SELECT ubicacion, 'bloque' FROM bloque WHERE ubicacion IS NOT NULL""")
-    arbol = {}
+    arbol = {lab: {"raton": 0, "placa": 0, "bloque": 0} for lab in LABS}
     for _, f in filas.iterrows():
-        partes = f["ubicacion"].split(SEP)
-        lugar = partes[0]
-        contenedor = partes[1] if len(partes) > 1 else "—"
-        arbol.setdefault(lugar, {}).setdefault(contenedor, {"placa": 0, "bloque": 0})[f["tipo"]] += 1
-    return dict(sorted(arbol.items()))
+        arbol.setdefault(f["ubicacion"], {"raton": 0, "placa": 0, "bloque": 0})[f["tipo"]] += 1
+    arbol["Bioterio"]["raton"] = int((ratones()["donde"] == "Bioterio").sum())
+    return arbol
 
 
-def en_ubicacion(ruta):
-    """Bloques y placas cuya ubicación empieza con `ruta`."""
-    patron = ruta + "%"
+def ratones_en_bioterio():
+    df = ratones()
+    return df[df["donde"] == "Bioterio"]
+
+
+def en_ubicacion(lab):
+    """Bloques y placas en un laboratorio dado."""
     placas_ = _q("""SELECT p.id, b.sujeto_id, p.serie, p.correlativo, p.tecnica, p.destino, p.estado, p.ubicacion
-                    FROM placa p JOIN bloque b ON b.id = p.bloque_id WHERE p.ubicacion LIKE ?
-                    ORDER BY p.ubicacion""", (patron,))
-    bloques_ = _q("SELECT id, sujeto_id, paso, ubicacion FROM bloque WHERE ubicacion LIKE ? ORDER BY ubicacion",
-                  (patron,))
+                    FROM placa p JOIN bloque b ON b.id = p.bloque_id WHERE p.ubicacion = ?
+                    ORDER BY b.sujeto_id, p.serie, p.correlativo""", (lab,))
+    bloques_ = _q("SELECT id, sujeto_id, paso, ubicacion FROM bloque WHERE ubicacion = ? ORDER BY ubicacion",
+                  (lab,))
     return bloques_, placas_
 
 
@@ -576,6 +689,6 @@ def linaje(sid):
         sub = ps[ps["serie"] == serie]
         if len(sub):
             proto = sub["protocolo"].iloc[0] if serie == "set" else None
-            series.append({"nombre": nombre + (f" · {proto}" if proto else ""),
+            series.append({"nombre": nombre + (f" ({proto})" if proto else ""),
                            "placas": sub.to_dict("records")})
     return {"bloque": bl, "series": series}

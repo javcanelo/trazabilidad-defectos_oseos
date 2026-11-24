@@ -5,15 +5,14 @@ Este archivo solo recibe pedidos, llama a servicios.py y muestra plantillas.
 
 Ejecutar en local:   uvicorn web.main:app --reload
 """
-import io
 import os
 import sys
 from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-import qrcode
-import qrcode.image.svg
+from typing import List
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,8 +39,8 @@ plantillas = Jinja2Templates(directory=AQUI / "templates")
 plantillas.env.filters["url"] = lambda s: quote(str(s), safe="")
 
 COLOR_PASO = {
-    "En experimentación": "lila", "Decalcificación": "ambar", "Recepción": "azul", "Reinclusión": "azul",
-    "Desgaste": "azul", "Esperando revisión SA": "naranja", "Corte de set": "azul", "Tinción HE": "azul",
+    "En experimentación": "lila", "Fijación en formalina": "lila", "Decalcificación": "ambar", "Recepción": "azul", "Reinclusión": "azul",
+    "Desgaste": "azul", "Esperando revisión": "naranja", "Corte de set": "azul", "Tinción HE": "azul",
     "Placas en técnicas": "verde", "Archivado": "gris",
 }
 
@@ -59,12 +58,20 @@ def volver(url):
     return RedirectResponse(url, status_code=303)
 
 
+SECCIONES = {"inicio", "manejo", "histologia", "tecnicas", "ubicaciones", "ratones"}
+
+
 def pagina(request, plantilla, activo="", **datos):
     alertas = sv.alertas_edta()
+    u = usuario(request)
+    pend = sv.alertas_histologia()
+    n_histo = (len(pend["revision"]) if u["rol"] in ("docente", "admin") else 0) + \
+              (len(pend["corte"]) if sv.puede(u, "paso_histologia") else 0)
     contexto = {
         "u": usuario(request), "rol": sv.NOMBRE_ROL.get(usuario(request)["rol"], ""),
         "mensaje": request.session.pop("mensaje", None), "activo": activo,
-        "n_alertas": int(alertas["toca_cambio"].sum()) if not alertas.empty else 0,
+        "n_alertas": int(alertas["toca_cambio"].sum()) if not alertas.empty and sv.puede(u, "cambio_edta") else 0,
+        "n_histo": n_histo, "pendientes": pend,
         "nube": sv.ES_POSTGRES, "color_paso": COLOR_PASO, "puede": lambda a: sv.puede(usuario(request), a),
         "hoy": date.today().isoformat(), "dias_edta": sv.DIAS_CAMBIO_EDTA,
     }
@@ -96,19 +103,14 @@ def a_fecha(texto):
     return date.fromisoformat(texto) if texto else date.today()
 
 
-def qr_svg(texto):
-    img = qrcode.make(texto, image_factory=qrcode.image.svg.SvgPathImage, box_size=8, border=1)
-    buf = io.BytesIO()
-    img.save(buf)
-    return buf.getvalue().decode()
-
-
 def tipo_placa(p):
     """Clase visual de una placa según técnica y resultado."""
+    if p.get("estado") == "inutilizable":
+        return "perdida"
     if p.get("tecnica") == "HE":
         return "he"
     if p.get("tecnica"):
-        return {"perdida": "perdida", "en proceso": "proceso", "repetir": "repetir"}.get(p.get("resultado"), "hecha")
+        return {"en proceso": "proceso", "repetir": "repetir"}.get(p.get("resultado"), "hecha")
     return "cargada" if p.get("tipo_portaobjeto") == "cargado" else "normal"
 
 
@@ -119,7 +121,7 @@ plantillas.env.globals["tipo_placa"] = tipo_placa
 @app.get("/login", response_class=HTMLResponse)
 async def ver_login(request: Request):
     return plantillas.TemplateResponse(request, "login.html", {
-        "usuarios": sv.nombres_usuarios(), "mensaje": request.session.pop("mensaje", None)})
+        "usuarios": sv.usuarios_login(), "mensaje": request.session.pop("mensaje", None)})
 
 
 @app.post("/login")
@@ -143,8 +145,12 @@ async def salir(request: Request):
 @protegido
 async def inicio(request: Request):
     al = sv.alertas_edta()
+    pend = sv.alertas_histologia()
+    u = usuario(request)
     return pagina(request, "inicio.html", "inicio",
-                  alertas=al[al["toca_cambio"]].to_dict("records") if not al.empty else [],
+                  revisar=pend["revision"] if u["rol"] in ("docente", "admin") else [],
+                  cortar=pend["corte"] if sv.puede(u, "paso_histologia") else [],
+                  alertas=al[al["toca_cambio"]].to_dict("records") if not al.empty and sv.puede(u, "cambio_edta") else [],
                   conteo=sv.conteo_por_paso(), pasos=sv.PASOS,
                   eventos=sv.eventos_recientes(12).to_dict("records"))
 
@@ -163,15 +169,78 @@ async def buscar(request: Request, q: str = ""):
 # ---------------------------------------------------------------- ratones
 @app.get("/ratones", response_class=HTMLResponse)
 @protegido
-async def lista_ratones(request: Request, paso: str = "Todos", q: str = ""):
-    df = sv.ratones(q, paso)
+async def lista_ratones(request: Request, paso: str = "Todos", q: str = "", orden: str = "Número"):
+    df = sv.ratones(q, paso, orden)
     return pagina(request, "ratones.html", "ratones", ratones=df.to_dict("records"),
-                  pasos=sv.PASOS, paso=paso, q=q, conteo=sv.conteo_por_paso())
+                  pasos=sv.PASOS, paso=paso, q=q, conteo=sv.conteo_por_paso(),
+                  orden=orden, ordenes=list(sv.ORDENES))
+
+
+def _datos_form(form):
+    return {k: (form.get(k) or "").strip() for k in sv.CAMPOS_RATON}
+
+
+@app.get("/ratones/nuevo", response_class=HTMLResponse)
+@protegido
+async def nuevo_raton(request: Request):
+    return pagina(request, "raton_form.html", "ratones", d={}, sid="", nuevo=True, contenidos=sv.CONTENIDOS)
+
+
+@app.post("/ratones/nuevo")
+@protegido
+async def crear_raton(request: Request):
+    form = await request.form()
+    sid = (form.get("id") or "").strip()
+    try:
+        sv.ingresar_raton(usuario(request), sid, _datos_form(form))
+        avisar(request, f"Ratón {sid} ingresado")
+        return volver(f"/ratones/{sid}")
+    except (PermissionError, ValueError) as e:
+        avisar(request, str(e), "error")
+        return volver("/ratones/nuevo")
+
+
+@app.get("/ratones/{sid}/editar", response_class=HTMLResponse)
+@protegido
+async def ver_editar_raton(request: Request, sid: str):
+    r = sv.raton(sid)
+    if not r:
+        return volver("/ratones")
+    return pagina(request, "raton_form.html", "ratones", d=r["datos"], sid=sid, nuevo=False, contenidos=sv.CONTENIDOS)
+
+
+@app.post("/ratones/{sid}/editar")
+@protegido
+async def guardar_raton(request: Request, sid: str):
+    form = await request.form()
+    ejecutar(request, sv.editar_raton, sid, _datos_form(form), ok="Datos del ratón guardados")
+    return volver(f"/ratones/{sid}")
+
+
+@app.post("/histologia/lote")
+@protegido
+async def lote_histologia(request: Request, accion: str = Form(...), sids: List[str] = Form([]),
+                          fecha: str = Form("")):
+    f = a_fecha(fecha)
+    funcion = {"inclusion": sv.registrar_inclusion, "he": sv.tenir_he_set}.get(accion)
+    if not funcion or not sids:
+        avisar(request, "Marca al menos un ratón.", "error")
+        return volver("/histologia")
+    ok, errores = 0, []
+    for sid in sids:
+        try:
+            funcion(usuario(request), f"{sid}-B1", f)
+            ok += 1
+        except (PermissionError, ValueError) as e:
+            errores.append(f"{sid}: {e}")
+    avisar(request, f"{ok} registrado(s)." + (" Errores: " + "; ".join(errores) if errores else ""),
+           "error" if errores else "ok")
+    return volver("/histologia")
 
 
 @app.get("/ratones/{sid}", response_class=HTMLResponse)
 @protegido
-async def ficha(request: Request, sid: str, tab: str = "resumen"):
+async def ficha(request: Request, sid: str, tab: str = "resumen", desde: str = "ratones"):
     r = sv.raton(sid)
     if not r:
         avisar(request, f"No existe el ratón {sid}.", "error")
@@ -180,13 +249,14 @@ async def ficha(request: Request, sid: str, tab: str = "resumen"):
     al = sv.alertas_edta()
     fila_al = al[al["id"] == sid].to_dict("records") if not al.empty else []
     ps = sv.placas(sid)
-    return pagina(request, "raton.html", "ratones", r=r, d=r["datos"], b=r["bloque_info"], tab=tab,
+    desde = desde if desde in SECCIONES else "ratones"
+    return pagina(request, "raton.html", desde, desde=desde, r=r, d=r["datos"], b=r["bloque_info"], tab=tab,
                   siguiente=sv.SIGUIENTE.get(r["paso_actual"]), linaje=sv.linaje(sid),
                   placas=ps.to_dict("records"), dec=dec, cambios=cambios.to_dict("records"),
                   edta=fila_al[0] if fila_al else None, img=sv.imagenologia(sid).to_dict("records"),
                   previo=sv.procesamiento_previo(sid).to_dict("records"),
                   historial=sv.historial(sid).to_dict("records"),
-                  protocolos=list(sv.PROTOCOLOS), cajas=sv.cajas_placas(),
+                  protocolos=list(sv.PROTOCOLOS), labs=sv.LABS,
                   n_he=sum(1 for p in ps.to_dict("records") if p["tecnica"] == "HE"))
 
 
@@ -194,17 +264,19 @@ async def ficha(request: Request, sid: str, tab: str = "resumen"):
 @protegido
 async def registrar(request: Request, sid: str, accion: str = Form(...), fecha: str = Form(""),
                     forma: str = Form(""), decision: str = Form(""), protocolo: str = Form(""),
-                    caja: str = Form(""), ubicacion: str = Form("")):
+                    ubicacion: str = Form(""), n_placas: int = Form(2), tenir: List[int] = Form([])):
     f = a_fecha(fecha)
     bid = f"{sid}-B1"
     acciones = {
-        "sacrificio": (sv.registrar_sacrificio, (sid, f), "Sacrificio registrado"),
+        "sacrificio": (sv.registrar_sacrificio, (sid, f), "Sacrificio y fijación en formalina registrados"),
+        "iniciar_decal": (sv.iniciar_decalcificacion, (sid, f), "Inicio de decalcificación registrado"),
         "edta": (sv.registrar_cambio_edta, (sid, f), "Cambio de EDTA registrado"),
         "enviar": (sv.enviar_a_histologia, (sid, f, forma), "Recepción en histología registrada"),
         "inclusion": (sv.registrar_inclusion, (bid, f), "Inclusión registrada"),
-        "desgaste": (sv.cortar_par_desgaste, (bid, f, caja), "Par de desgaste registrado"),
-        "revision": (sv.registrar_revision_sa, (bid, f, decision, protocolo), "Revisión SA registrada"),
-        "set": (sv.cortar_set, (bid, f, protocolo, caja), "Set de corte registrado"),
+        "desgaste": (sv.cortar_desgaste, (bid, f, n_placas), f"{n_placas} placa(s) de desgaste registradas"),
+        "tenir_desgaste": (sv.tenir_desgaste, (bid, f, tenir), "Tinción HE del desgaste registrada"),
+        "revision": (sv.registrar_revision_sa, (bid, f, decision, protocolo), "Revisión registrada"),
+        "set": (sv.cortar_set, (bid, f, protocolo), "Set de corte registrado"),
         "he": (sv.tenir_he_set, (bid, f), "Tinción HE registrada"),
         "archivar": (sv.archivar, (bid, f), "Bloque archivado"),
         "mover_bloque": (sv.mover_bloque, (bid, ubicacion, f), "Ubicación del bloque actualizada"),
@@ -226,28 +298,33 @@ async def ver_placa(request: Request, pid: int):
     if not p:
         avisar(request, "Placa no encontrada.", "error")
         return volver("/ratones")
-    url = str(request.url_for("ver_placa", pid=pid))
-    return pagina(request, "placa.html", "ratones", p=p, qr=qr_svg(url), url=url,
-                  historial=sv.historial_placa(pid).to_dict("records"),
+    return pagina(request, "placa.html", "ratones", p=p,
+                  movimientos=sv.movimientos_placa(pid).to_dict("records"),
                   hermanas=sv.placas(p["sujeto_id"]).to_dict("records"),
-                  resultados=sv.RESULTADOS, cajas=sv.cajas_placas())
+                  resultados=sv.RESULTADOS, labs=sv.LABS)
 
 
 @app.post("/placas/{pid}/tecnica")
 @protegido
 async def tecnica(request: Request, pid: int, tipo: str = Form(...), detalle: str = Form(""),
-                  resultado: str = Form(...), comentario: str = Form(""), ubicacion: str = Form(""),
-                  fecha: str = Form("")):
+                  resultado: str = Form(...), comentario: str = Form(""), fecha: str = Form("")):
     tec = f"IHQ/IF {detalle}".strip() if tipo == "IHQ/IF" else f"Otra: {detalle}".strip()
     ejecutar(request, sv.registrar_tecnica, pid, a_fecha(fecha), tec, resultado, comentario,
-             ubicacion or f"Con {usuario(request)['nombre']}", ok="Técnica registrada")
+             ok="Técnica registrada")
+    return volver(f"/placas/{pid}")
+
+
+@app.post("/placas/{pid}/inutilizable")
+@protegido
+async def inutilizable(request: Request, pid: int, comentario: str = Form(""), fecha: str = Form("")):
+    ejecutar(request, sv.marcar_inutilizable, pid, a_fecha(fecha), comentario, ok="Placa marcada como inutilizable")
     return volver(f"/placas/{pid}")
 
 
 @app.post("/placas/{pid}/mover")
 @protegido
-async def mover(request: Request, pid: int, destino: str = Form(""), otro: str = Form("")):
-    ejecutar(request, sv.mover_placa, pid, otro.strip() or destino, date.today(), ok="Ubicación actualizada")
+async def mover(request: Request, pid: int, destino: str = Form("")):
+    ejecutar(request, sv.mover_placa, pid, destino, date.today(), ok="Ubicación actualizada")
     return volver(f"/placas/{pid}")
 
 
@@ -260,6 +337,7 @@ async def manejo(request: Request):
     dias = dict(zip(al["id"], al["dias"])) if not al.empty else {}
     return pagina(request, "manejo.html", "manejo",
                   vivos=df[df["paso_actual"] == "En experimentación"].to_dict("records"),
+                  formalina=df[df["paso_actual"] == "Fijación en formalina"].to_dict("records"),
                   edta=[dict(f, dias=int(dias[f["id"]])) for f in df.to_dict("records") if f["id"] in dias])
 
 
@@ -273,17 +351,20 @@ async def histologia(request: Request):
 
 @app.get("/tecnicas", response_class=HTMLResponse)
 @protegido
-async def tecnicas(request: Request):
+async def tecnicas(request: Request, resultado: str = "Todos"):
     return pagina(request, "tecnicas.html", "tecnicas",
                   disponibles=sv.placas_para_tecnicas().to_dict("records"),
-                  resultados=sv.resultados_recientes().to_dict("records"))
+                  resultados=sv.resultados_recientes(resultado).to_dict("records"),
+                  filtro=resultado, opciones=sv.RESULTADOS + ["inutilizable"])
 
 
 @app.get("/ubicaciones", response_class=HTMLResponse)
 @protegido
-async def ubicaciones(request: Request, ruta: str = ""):
-    bloques, placas_ = sv.en_ubicacion(ruta) if ruta else (None, None)
-    return pagina(request, "ubicaciones.html", "ubicaciones", arbol=sv.arbol_ubicaciones(), sel=ruta,
+async def ubicaciones(request: Request, lab: str = ""):
+    bloques, placas_ = sv.en_ubicacion(lab) if lab else (None, None)
+    bio = sv.ratones_en_bioterio().to_dict("records") if lab == "Bioterio" else []
+    return pagina(request, "ubicaciones.html", "ubicaciones", arbol=sv.arbol_ubicaciones(), sel=lab,
+                  labs=sv.LABS, bioterio=bio,
                   bloques=[] if bloques is None else bloques.to_dict("records"),
                   placas=[] if placas_ is None else placas_.to_dict("records"))
 
@@ -293,3 +374,13 @@ async def ubicaciones(request: Request, ruta: str = ""):
 async def edta_rapido(request: Request, sid: str):
     ejecutar(request, sv.registrar_cambio_edta, sid, date.today(), ok=f"Cambio de EDTA registrado ({sid})")
     return volver(request.headers.get("referer") or "/")
+
+
+@app.post("/ubicaciones/mover")
+@protegido
+async def mover_varios(request: Request, destino: str = Form(...), placas: List[int] = Form([]),
+                       bloques: List[str] = Form([])):
+    n = len(placas) + len(bloques)
+    ejecutar(request, sv.mover_varios, placas, bloques, destino, date.today(),
+             ok=f"{n} muestra(s) movida(s) a {destino}")
+    return volver(request.headers.get("referer") or "/ubicaciones")
