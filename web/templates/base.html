@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block titulo %}OsteoTraza{% endblock %} · OsteoTraza</title>
+  <title>{% block titulo %}OsteoTraza{% endblock %} | OsteoTraza</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/estilo.css">
@@ -27,7 +27,8 @@
       {% for clave, href, icono, texto in items %}
         <a href="{{ href }}" class="{{ 'activo' if activo == clave }}">
           <i data-lucide="{{ icono }}"></i><span>{{ texto }}</span>
-          {% if clave == "manejo" and n_alertas %}<em class="burbuja">{{ n_alertas }}</em>{% endif %}
+          {% if clave == "manejo" and n_alertas %}<em class="burbuja" title="Ratones con EDTA por cambiar">{{ n_alertas }}</em>{% endif %}
+          {% if clave == "histologia" and n_histo %}<em class="burbuja" title="Revisiones o cortes de set pendientes">{{ n_histo }}</em>{% endif %}
         </a>
       {% endfor %}
     </nav>
@@ -36,7 +37,7 @@
       <div><b>{{ u.nombre }}</b><small>{{ rol }}</small></div>
       <a href="/salir" title="Salir"><i data-lucide="log-out"></i></a>
     </div>
-    <p class="base-datos"><i data-lucide="database"></i> {{ "Supabase (nube)" if nube else "SQLite (local)" }} · datos ficticios</p>
+    <p class="base-datos"><i data-lucide="database"></i> {{ "Supabase (nube)" if nube else "SQLite (local)" }}, datos ficticios</p>
   </aside>
 
   <main>

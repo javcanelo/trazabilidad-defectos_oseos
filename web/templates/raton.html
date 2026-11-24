@@ -2,11 +2,14 @@
 {% from "_macros.html" import chip, portaobjeto, leyenda, ruta, campo_fecha %}
 {% block titulo %}Ratón {{ r.id }}{% endblock %}
 {% block contenido %}
-<div class="migas"><a href="/ratones">Ratones</a><i data-lucide="chevron-right"></i><span class="num">{{ r.id }}</span></div>
+{% set q_desde = '' if desde == 'ratones' else '&desde=' ~ desde %}
+<div class="migas"><a href="/{{ desde if desde != 'inicio' else '' }}">{{ {'ratones':'Ratones','histologia':'Histología','manejo':'Manejo','tecnicas':'Técnicas','ubicaciones':'Ubicaciones','inicio':'Inicio'}[desde] }}</a><i data-lucide="chevron-right"></i><span class="num">{{ r.id }}</span></div>
 <div class="encabezado">
   <div>
     <h1>Ratón <span class="num">{{ r.id }}</span></h1>
-    <p>{{ chip(r.paso_actual, color_paso) }} <span class="chip chip-borde">{{ d.grupo }}</span>
+    <p>{{ chip(r.paso_actual, color_paso) }}
+       <span class="chip chip-azul"><i data-lucide="map-pin" style="width:13px;height:13px;vertical-align:-2px"></i> {{ r.donde }}</span>
+       <span class="chip chip-borde">{{ d.grupo }}</span>
        <span class="chip chip-borde">izq.: {{ d.contenido_defecto_izq }}</span>
        <span class="chip chip-borde">der.: {{ d.contenido_defecto_der }}</span></p>
   </div>
@@ -23,53 +26,80 @@
   {% set paso = r.paso_actual %}
   {% set accion = none %}
   {% if paso == 'En experimentación' and puede('sacrificio') %}{% set accion = 'sacrificio' %}
+  {% elif paso == 'Fijación en formalina' and puede('cambio_edta') %}{% set accion = 'iniciar_decal' %}
   {% elif paso == 'Decalcificación' and puede('enviar_histologia') %}{% set accion = 'enviar' %}
-  {% elif paso == 'Esperando revisión SA' and puede('revision_sa') %}{% set accion = 'revision' %}
+  {% elif paso == 'Esperando revisión' and puede('revision_sa') %}{% set accion = 'revision' %}
   {% elif paso in ['Recepción', 'Reinclusión'] and puede('paso_histologia') %}{% set accion = 'inclusion' %}
   {% elif paso == 'Desgaste' and puede('paso_histologia') %}{% set accion = 'desgaste' %}
   {% elif paso == 'Corte de set' and puede('paso_histologia') %}{% set accion = 'set' %}
   {% elif paso == 'Tinción HE' and puede('paso_histologia') %}{% set accion = 'he' %}
   {% elif paso == 'Placas en técnicas' and puede('paso_histologia') %}{% set accion = 'archivar' %}
   {% endif %}
-  {% if accion %}
+  {% set edta_abierta = dec and not dec.fecha_fin and puede('cambio_edta') %}
+  {% if accion or edta_abierta %}
   <div class="tarjeta registrar" style="margin-bottom:16px">
-    <h3><i data-lucide="pen-line"></i> Registrar · {{ siguiente or paso }}</h3>
+    {% if edta_abierta %}
+    <h3><i data-lucide="refresh-cw"></i> Cambio de EDTA
+      {% if edta %}<small>· último hace {{ edta.dias }} días</small>{% if edta.toca_cambio %} <span class="chip chip-naranja">toca cambiar</span>{% endif %}{% endif %}</h3>
+    <form method="post" action="/ratones/{{ r.id }}/registrar" class="registro" style="margin-bottom:{{ '14px' if accion else '0' }}">
+      <input type="hidden" name="accion" value="edta">{{ campo_fecha(hoy) }}<button><i data-lucide="check"></i> Registrar cambio de EDTA</button>
+    </form>
+    {% endif %}
+    {% if accion %}
+    <h3><i data-lucide="pen-line"></i> Registrar: {{ siguiente or paso }}</h3>
     <form method="post" action="/ratones/{{ r.id }}/registrar" class="registro">
       <input type="hidden" name="accion" value="{{ accion }}">
       {% if accion == 'enviar' %}
         <div class="opciones"><label><input type="radio" name="forma" value="cubo de parafina" checked> Cubo de parafina</label>
         <label><input type="radio" name="forma" value="cabeza en EDTA"> Cabeza en EDTA</label></div>
       {% elif accion == 'revision' %}
-        <label>Decisión <select name="decision"><option>Profundizar desgaste</option><option>Indicar set de corte</option><option>Archivar</option></select></label>
-        <label>Set indicado <select name="protocolo">{% for p in protocolos %}<option>{{ p }}</option>{% endfor %}</select></label>
-      {% elif accion in ['desgaste', 'set'] %}
-        {% if accion == 'set' %}<label>Set <select name="protocolo">{% for p in protocolos %}<option>{{ p }}</option>{% endfor %}</select></label>{% endif %}
-        <label>Guardar en <select name="caja">{% for c in cajas %}<option>{{ c }}</option>{% endfor %}</select></label>
+        <label>Decisión <select name="decision"><option>Indicar set de corte</option><option>Profundizar desgaste</option></select></label>
+        <label>Set indicado (si corresponde) <select name="protocolo">{% for p in protocolos %}<option>{{ p }}</option>{% endfor %}</select></label>
+      {% elif accion == 'desgaste' %}
+        <label>¿Cuántas placas cortaste? <input type="number" name="n_placas" value="2" min="1" max="20" style="width:80px"></label>
+      {% elif accion == 'set' %}
+        <label>Set <select name="protocolo">{% for p in protocolos %}<option>{{ p }}</option>{% endfor %}</select></label>
       {% endif %}
       {{ campo_fecha(hoy) }}
       <button>{{ {'sacrificio': 'Registrar sacrificio', 'enviar': 'Registrar envío a histología', 'revision': 'Guardar revisión',
                   'inclusion': 'Inclusión en casete' if paso == 'Recepción' else 'Reinclusión en casete',
-                  'desgaste': 'Cortar par y teñir HE la par', 'set': 'Registrar corte del set',
-                  'he': 'Registrar tinción HE del set', 'archivar': 'Archivar / cerrar trabajo'}[accion] }}</button>
+                  'desgaste': 'Registrar corte de placas', 'set': 'Registrar corte del set',
+                  'he': 'Registrar tinción HE del set', 'archivar': 'Archivar (set terminado)',
+                  'iniciar_decal': 'Iniciar decalcificación (EDTA)'}[accion] }}</button>
     </form>
+    {% if accion == 'desgaste' %}
+      {% set des = placas|selectattr('serie', 'equalto', 'desgaste')|list %}
+      {% set ultima_he = des|selectattr('tecnica')|map(attribute='correlativo')|max or 0 %}
+      {% set sin_tenir = des|rejectattr('tecnica')|rejectattr('estado', 'equalto', 'inutilizable')|selectattr('correlativo', 'gt', ultima_he)|list %}
+      {% if sin_tenir %}
+      <h3 style="margin-top:16px"><i data-lucide="droplet"></i> Teñir HE del desgaste <small>(después pasa a revisión)</small></h3>
+      <form method="post" action="/ratones/{{ r.id }}/registrar" class="registro">
+        <input type="hidden" name="accion" value="tenir_desgaste">
+        <div class="opciones">{% for p in sin_tenir %}<label><input type="checkbox" name="tenir" value="{{ p.correlativo }}"> Placa {{ p.correlativo }}</label>{% endfor %}</div>
+        {{ campo_fecha(hoy) }}
+        <button>Registrar tinción HE</button>
+      </form>
+      {% endif %}
+    {% endif %}
+    {% endif %}
   </div>
   {% endif %}
 
   <nav class="pestanas">
     {% for clave, icono, texto in [("resumen","git-fork","Linaje"),("placas","layers","Placas"),("manejo","flask-conical","Manejo"),("imagen","scan","Imagenología"),("historial","history","Historial")] %}
-      <a href="?tab={{ clave }}" class="{{ 'activo' if tab == clave }}"><i data-lucide="{{ icono }}"></i>{{ texto }}{% if clave == 'placas' %} <small>({{ placas|length }})</small>{% endif %}</a>
+      <a href="?tab={{ clave }}{{ q_desde }}" class="{{ 'activo' if tab == clave }}"><i data-lucide="{{ icono }}"></i>{{ texto }}{% if clave == 'placas' %} <small>({{ placas|length }})</small>{% endif %}</a>
     {% endfor %}
   </nav>
 
   {% if tab == 'resumen' %}
   <div class="tarjeta">
     <ul class="arbol">
-      <li><span class="nodo"><i data-lucide="rat"></i><b class="num">{{ r.id }}</b><small>{{ d.grupo }} · {{ d.sexo }}</small></span>
+      <li><span class="nodo"><i data-lucide="rat"></i><b class="num">{{ r.id }}</b><small>{{ d.grupo }}, {{ d.sexo|lower }}</small></span>
         <ul>
-          <li><span class="nodo"><i data-lucide="flask-conical"></i>Manejo<small>cirugía {{ d.fecha_cirugia }}{% if d.fecha_sacrificio %} · sacrificio {{ d.fecha_sacrificio }}{% endif %}{% if dec %} · EDTA {{ cambios|length }} cambios{% endif %}</small></span></li>
+          <li><span class="nodo"><i data-lucide="flask-conical"></i>Manejo<small>cirugía {{ d.fecha_cirugia }}{% if d.fecha_sacrificio %}, sacrificio {{ d.fecha_sacrificio }}{% endif %}{% if dec %}, {{ cambios|length }} cambios de EDTA{% endif %}</small></span></li>
           {% for e in img %}<li><span class="nodo"><i data-lucide="scan"></i>{{ e.tipo }}<small>{{ e.fecha }}</small></span></li>{% endfor %}
           {% if linaje %}
-          <li><span class="nodo"><i data-lucide="box"></i>Bloque <b class="num">{{ linaje.bloque.id }}</b><small>{{ linaje.bloque.forma_llegada }} · {{ ruta(linaje.bloque.ubicacion) }}</small></span>
+          <li><span class="nodo"><i data-lucide="box"></i>Bloque <b class="num">{{ linaje.bloque.id }}</b><small>{{ linaje.bloque.forma_llegada }}, {{ linaje.bloque.ubicacion }}</small></span>
             <ul>
               {% for s in linaje.series %}
               <li><span class="nodo"><i data-lucide="layers"></i>{{ s.nombre }}<small>{{ s.placas|length }} placas</small></span>
@@ -99,7 +129,7 @@
         {% for p in placas %}
           <tr><td>{{ portaobjeto(p, False) }}</td><td>{{ p.serie }}</td><td class="num"><a href="/placas/{{ p.id }}">{{ p.correlativo }}</a></td>
               <td>{{ p.tipo_portaobjeto }}</td><td>{{ p.tecnica or '—' }}{% if p.resultado %}<br><small>{{ p.resultado }}</small>{% endif %}</td>
-              <td>{{ p.estado }}</td><td><small>{{ ruta(p.ubicacion) }}</small></td></tr>
+              <td>{{ p.estado }}</td><td><small>{{ p.ubicacion }}</small></td></tr>
         {% endfor %}
         </tbody></table></div>
     {% else %}<p class="vacio">Aún no hay placas.</p>{% endif %}
@@ -122,10 +152,6 @@
         <dt>Cambios</dt><dd>{{ cambios|length }}</dd>
         {% if edta %}<dt>Último cambio</dt><dd>hace {{ edta.dias }} días {% if edta.toca_cambio %}<span class="chip chip-naranja">toca cambiar</span>{% endif %}</dd>{% endif %}
       </dl>
-      {% if not dec.fecha_fin and puede('cambio_edta') %}
-      <hr><form method="post" action="/ratones/{{ r.id }}/registrar" class="registro">
-        <input type="hidden" name="accion" value="edta">{{ campo_fecha(hoy) }}<button><i data-lucide="refresh-cw"></i> Registrar cambio</button></form>
-      {% endif %}
       {% else %}<p class="vacio">Sin decalcificación registrada.</p>{% endif %}
     </div>
   </div>
@@ -137,7 +163,7 @@
   {% elif tab == 'imagen' %}
   <div class="tarjeta">
     {% for e in img %}
-      <h2>{{ e.tipo }} <small>· {{ e.lugar }} · {{ e.fecha }}</small></h2>
+      <h2>{{ e.tipo }} <small>{{ e.lugar }}, {{ e.fecha }}</small></h2>
       {% if e.vista_previa %}<img src="{{ e.vista_previa }}" alt="Vista previa" style="max-width:100%">{% else %}<p class="vacio">Vista previa sin cargar todavía.</p>{% endif %}
       {% if e.archivo_original %}<a class="boton secundario" href="{{ e.archivo_original }}"><i data-lucide="download"></i> Reconstrucción original</a>{% endif %}
     {% else %}<p class="vacio">Sin estudios de imagen.</p>{% endfor %}
@@ -159,32 +185,26 @@
   <details><summary><small>Cambiar ubicación del bloque</small></summary>
     <form method="post" action="/ratones/{{ r.id }}/registrar" class="registro" style="margin-top:8px">
       <input type="hidden" name="accion" value="mover_bloque">
-      <input name="ubicacion" value="{{ b.ubicacion or '' }}" style="width:100%"><button class="secundario">Guardar</button>
+      <select name="ubicacion">{% for l in labs %}<option {{ 'selected' if l == b.ubicacion }}>{{ l }}</option>{% endfor %}</select><button class="secundario">Guardar</button>
     </form></details>
   {% endif %}
   <hr>
   <h3>Resumen</h3>
   <dl>
     <dt>Último trabajo</dt><dd>{{ (r.ultimo or '—').split(' · ')[0] }}<br><small>{{ (r.ultimo or ' · ').split(' · ')[1] }}</small></dd>
-    <dt>Placas</dt><dd>{{ placas|length }}</dd>
+    {% if b %}<dt>Placas</dt><dd>{{ placas|length }}</dd>
     <dt>HE teñidas</dt><dd>{{ n_he }}</dd>
-    {% if b %}<dt>Llegó como</dt><dd>{{ b.forma_llegada }}</dd>
+    <dt>Llegó como</dt><dd>{{ b.forma_llegada }}</dd>
     <dt>Recepción</dt><dd>{{ b.fecha_recepcion }}</dd>
     <dt>(Re)inclusión</dt><dd>{{ b.fecha_reinclusion or 'pendiente' }}</dd>{% endif %}
   </dl>
-  {% if edta and edta.toca_cambio %}
-  <hr><div class="alerta" style="margin:0"><b>Cambiar EDTA</b><br><small>último cambio hace {{ edta.dias }} días</small>
-    {% if puede('cambio_edta') %}<form method="post" action="/edta/{{ r.id }}" style="margin-top:8px"><button><i data-lucide="check"></i> Cambié EDTA hoy</button></form>{% endif %}</div>
-  {% endif %}
   <hr>
   <h3>Datos</h3>
   <dl>
-    <dt>Sexo</dt><dd>{{ d.sexo }}</dd>
-    <dt>Caja</dt><dd>{{ d.caja }}</dd>
-    <dt>Experimento</dt><dd>{{ d.experimento }}</dd>
-    <dt>Tesis</dt><dd>{{ d.tesis_responsable }}</dd>
-    <dt>Lista</dt><dd>{{ d.lista or '—' }}</dd>
+    <dt>Sexo</dt><dd>{{ d.sexo or '—' }}</dd>
+    {% if d.comentarios %}<dt>Otros datos</dt><dd>{{ d.comentarios|replace('\n', '<br>')|safe }}</dd>{% endif %}
   </dl>
+  {% if puede('ingresar_raton') %}<a class="boton secundario" href="/ratones/{{ r.id }}/editar"><i data-lucide="pencil"></i> Editar datos</a>{% endif %}
 </aside>
 </div>
 {% endblock %}

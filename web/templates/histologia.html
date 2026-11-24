@@ -1,15 +1,23 @@
 {% extends "base.html" %}
-{% from "_macros.html" import chip, ruta %}
+{% from "_macros.html" import chip, campo_fecha %}
 {% block titulo %}Histología{% endblock %}
 {% block contenido %}
-<div class="encabezado"><div><h1>Histología</h1><p>Lo que se está haciendo, por paso.</p></div></div>
+<div class="encabezado"><div><h1>Histología</h1><p>Lo que se está haciendo, por paso. En Recepción, Reinclusión y Tinción HE puedes marcar varios y registrarlos juntos.</p></div></div>
+{% set lotes = {'Recepción': ('inclusion', 'Registrar inclusión de los marcados'), 'Reinclusión': ('inclusion', 'Registrar reinclusión de los marcados'),
+                'Tinción HE': ('he', 'Registrar tinción HE de los marcados')} %}
 {% for paso, lista in grupos %}
 <div class="tarjeta">
-  <h2>{{ chip(paso, color_paso) }} <small>{{ lista|length }}</small></h2>
+  <h2>{{ chip(paso, color_paso) }} <small>{{ lista|length }}</small>
+    {% if lista and ((paso == 'Esperando revisión' and u.rol in ('docente', 'admin')) or (paso == 'Corte de set' and puede('paso_histologia'))) %}
+      <em class="burbuja" style="margin-left:6px">pendiente</em>{% endif %}</h2>
   {% if lista %}
-  <div class="tabla-scroll"><table><thead><tr><th>Ratón</th><th>Último trabajo</th><th>Dónde está</th><th>HE</th></tr></thead><tbody>
-  {% for r in lista %}<tr><td><a class="num" href="/ratones/{{ r.id }}">{{ r.id }}</a></td><td><small>{{ r.ultimo }}</small></td><td><small>{{ ruta(r.donde) }}</small></td><td>{{ r.he }}</td></tr>{% endfor %}
+  {% set lote = lotes.get(paso) if puede('paso_histologia') else none %}
+  {% if lote %}<form method="post" action="/histologia/lote"><input type="hidden" name="accion" value="{{ lote[0] }}">{% endif %}
+  <div class="tabla-scroll"><table><thead><tr>{% if lote %}<th></th>{% endif %}<th>Ratón</th><th>Último trabajo</th><th>Dónde está</th></tr></thead><tbody>
+  {% for r in lista %}<tr>{% if lote %}<td><input type="checkbox" name="sids" value="{{ r.id }}"></td>{% endif %}
+    <td><a class="num" href="/ratones/{{ r.id }}?desde=histologia">{{ r.id }}</a></td><td><small>{{ r.ultimo }}</small></td><td><small>{{ r.donde }}</small></td></tr>{% endfor %}
   </tbody></table></div>
+  {% if lote %}<div class="registro" style="margin-top:10px">{{ campo_fecha(hoy) }}<button>{{ lote[1] }}</button></div></form>{% endif %}
   {% else %}<p class="vacio">Nada en este paso.</p>{% endif %}
 </div>
 {% endfor %}

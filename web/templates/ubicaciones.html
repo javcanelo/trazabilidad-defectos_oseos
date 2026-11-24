@@ -1,34 +1,51 @@
 {% extends "base.html" %}
-{% from "_macros.html" import ruta %}
 {% block titulo %}Ubicaciones{% endblock %}
 {% block contenido %}
-<div class="encabezado"><div><h1>Ubicaciones</h1><p>Dónde está cada bloque y cada placa: lugar › contenedor › posición.</p></div></div>
-<div class="ficha" style="grid-template-columns: 320px minmax(0,1fr)">
+<div class="encabezado"><div><h1>Ubicaciones</h1><p>En qué laboratorio está cada ratón, bloque y placa. Quién la manipuló por última vez queda en el historial.</p></div></div>
+<div class="ficha" style="grid-template-columns: 300px minmax(0,1fr)">
   <div class="tarjeta">
     <ul class="arbol">
-      {% for lugar, contenedores in arbol.items() %}
-      <li><a class="nodo" href="?ruta={{ lugar|url }}"><i data-lucide="{{ 'user' if lugar.startswith('Con ') else 'archive' }}"></i>{{ lugar }}</a>
-        {% if contenedores.keys()|list != ['—'] %}<ul>
-          {% for c, n in contenedores.items() %}
-          <li><a class="nodo" href="?ruta={{ (lugar ~ ' › ' ~ c)|url }}"><i data-lucide="package"></i>{{ c }}
-              <small>{% if n.placa %}{{ n.placa }} placas{% endif %}{% if n.bloque %} {{ n.bloque }} bloques{% endif %}</small></a></li>
-          {% endfor %}
-        </ul>{% else %}<small> · {{ contenedores['—'].placa }} placas</small>{% endif %}
-      </li>
+      {% for lab, n in arbol.items() %}
+      <li><a class="nodo" href="?lab={{ lab|url }}"><i data-lucide="{{ 'rat' if lab == 'Bioterio' else 'building-2' }}"></i><b>{{ lab }}</b></a>
+        <small style="display:block;margin-left:26px">
+          {% set partes = [] %}
+          {% if n.raton %}{% set _ = partes.append(n.raton ~ ' ratones') %}{% endif %}
+          {% if n.bloque %}{% set _ = partes.append(n.bloque ~ ' bloques') %}{% endif %}
+          {% if n.placa %}{% set _ = partes.append(n.placa ~ ' placas') %}{% endif %}
+          {{ partes|join(', ') if partes else 'vacío' }}</small></li>
       {% endfor %}
     </ul>
   </div>
   <div class="tarjeta">
-    {% if sel %}
-      <h2>{{ ruta(sel) }}</h2>
-      {% if bloques %}<h3>Bloques</h3><table><tbody>{% for b in bloques %}<tr><td><a class="num" href="/ratones/{{ b.sujeto_id }}">{{ b.id }}</a></td><td>{{ b.paso }}</td><td><small>{{ ruta(b.ubicacion) }}</small></td></tr>{% endfor %}</tbody></table>{% endif %}
+    {% if sel == 'Bioterio' %}
+      <h2>Bioterio</h2>
+      <table><thead><tr><th>Ratón</th><th>Paso</th></tr></thead><tbody>
+      {% for r in bioterio %}<tr><td><a class="num" href="/ratones/{{ r.id }}?desde=ubicaciones">{{ r.id }}</a></td><td>{{ r.paso_actual }}</td></tr>
+      {% else %}<tr><td colspan="2" class="vacio">Vacío.</td></tr>{% endfor %}</tbody></table>
+    {% elif sel %}
+      <h2>{{ sel }}</h2>
+      {% if bloques or placas %}
+      <form method="post" action="/ubicaciones/mover">
+      {% if puede('ubicacion') %}
+      <div class="registro" style="margin-bottom:12px">
+        <label>Mover lo marcado a <select name="destino">{% for l in labs if l != sel and l != 'Bioterio' %}<option>{{ l }}</option>{% endfor %}</select></label>
+        <button class="secundario"><i data-lucide="move-right"></i> Mover</button>
+        <small><a href="#" onclick="document.querySelectorAll('.marcar').forEach(c=>c.checked=true);return false">marcar todo</a></small>
+      </div>
+      {% endif %}
+      {% if bloques %}<h3>Bloques ({{ bloques|length }})</h3><table><tbody>{% for b in bloques %}<tr>
+        {% if puede('ubicacion') %}<td><input type="checkbox" class="marcar" name="bloques" value="{{ b.id }}"></td>{% endif %}
+        <td><a class="num" href="/ratones/{{ b.sujeto_id }}?desde=ubicaciones">{{ b.id }}</a></td><td>{{ b.paso }}</td></tr>{% endfor %}</tbody></table>{% endif %}
       {% if placas %}<h3 style="margin-top:14px">Placas ({{ placas|length }})</h3>
-      <div class="tabla-scroll"><table><thead><tr><th>Posición</th><th>Ratón</th><th>Placa</th><th>Técnica</th><th>Estado</th></tr></thead><tbody>
-      {% for p in placas %}<tr><td><small>{{ p.ubicacion.split(' › ')[-1] }}</small></td><td><a class="num" href="/ratones/{{ p.sujeto_id }}">{{ p.sujeto_id }}</a></td>
-        <td><a href="/placas/{{ p.id }}">{{ p.serie }} {{ p.correlativo }}</a></td><td>{{ p.tecnica or '—' }}</td><td>{{ p.estado }}</td></tr>{% endfor %}
+      <div class="tabla-scroll"><table><thead><tr>{% if puede('ubicacion') %}<th></th>{% endif %}<th>Ratón</th><th>Placa</th><th>Técnica</th><th>Estado</th></tr></thead><tbody>
+      {% for p in placas %}<tr>
+        {% if puede('ubicacion') %}<td><input type="checkbox" class="marcar" name="placas" value="{{ p.id }}"></td>{% endif %}
+        <td><a class="num" href="/ratones/{{ p.sujeto_id }}?desde=ubicaciones">{{ p.sujeto_id }}</a></td>
+        <td><a class="boton secundario" style="padding:2px 8px" href="/placas/{{ p.id }}">{{ p.serie }} {{ p.correlativo }}</a></td><td>{{ p.tecnica or '—' }}</td><td>{{ p.estado }}</td></tr>{% endfor %}
       </tbody></table></div>{% endif %}
-      {% if not bloques and not placas %}<p class="vacio">Vacío.</p>{% endif %}
-    {% else %}<p class="vacio">Elige un lugar o contenedor a la izquierda.</p>{% endif %}
+      </form>
+      {% else %}<p class="vacio">Vacío.</p>{% endif %}
+    {% else %}<p class="vacio">Elige un lugar a la izquierda.</p>{% endif %}
   </div>
 </div>
 {% endblock %}

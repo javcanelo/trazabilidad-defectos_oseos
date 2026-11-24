@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block titulo %}{{ 'Ingresar ratón' if nuevo else 'Editar ratón ' ~ sid }}{% endblock %}
+{% block contenido %}
+<div class="migas"><a href="/ratones">Ratones</a>{% if not nuevo %}<i data-lucide="chevron-right"></i><a class="num" href="/ratones/{{ sid }}">{{ sid }}</a>{% endif %}</div>
+<div class="encabezado"><div><h1>{{ 'Ingresar ratón' if nuevo else 'Editar ratón' }}</h1><p>Los campos con * son obligatorios.</p></div></div>
+<div class="tarjeta">
+  <form method="post" class="registro">
+    {% if nuevo %}<label>Número del ratón * <input name="id" required pattern="[0-9]+" placeholder="ej. 9123456"></label>
+    {% else %}<label>Número del ratón <input value="{{ sid }}" disabled></label>{% endif %}
+    <label>Sexo <select name="sexo">{% for s in ['Hembra', 'Macho'] %}<option {{ 'selected' if d.sexo == s }}>{{ s }}</option>{% endfor %}</select></label>
+    <label>Fecha de nacimiento <input type="date" name="fecha_nacimiento" value="{{ d.fecha_nacimiento or '' }}"></label>
+    <label>Fecha de cirugía * <input type="date" name="fecha_cirugia" value="{{ d.fecha_cirugia or hoy }}" required></label>
+    <label>Defecto izquierdo * <input name="contenido_defecto_izq" list="contenidos" value="{{ d.contenido_defecto_izq or '' }}" required></label>
+    <label>Defecto derecho * <input name="contenido_defecto_der" list="contenidos" value="{{ d.contenido_defecto_der or '' }}" required></label>
+    <datalist id="contenidos">{% for c in contenidos %}<option value="{{ c }}">{% endfor %}</datalist>
+    <label>Tiempo de experimentación <input name="tiempo_experimentacion" value="{{ d.tiempo_experimentacion or '' }}" placeholder="ej. 8 semanas"></label>
+    <label>Anestesia <input name="anestesia" value="{{ d.anestesia or '' }}" placeholder="ej. 0,10 ml"></label>
+    <label style="flex:1 1 100%">Otros datos (opcional, uno por línea, ej. «Tesis: A» o «Peso: 25 g»)
+      <textarea name="comentarios" rows="4">{{ d.comentarios or '' }}</textarea></label>
+    <button>{{ 'Ingresar ratón' if nuevo else 'Guardar cambios' }}</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="es"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ingresar · OsteoTraza</title>
+<title>Ingresar a OsteoTraza</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/estilo.css">
 <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" defer></script>
@@ -9,16 +9,16 @@
 <div class="login">
   <div class="tarjeta">
     <div class="marca" style="padding:0 0 16px"><span class="marca-icono"><i data-lucide="scan-line"></i></span>
-      <span><b>OsteoTraza</b><small>trazabilidad de muestras · defectos óseos</small></span></div>
+      <span><b>OsteoTraza</b><small>trazabilidad de muestras - defectos óseos</small></span></div>
     {% if mensaje %}<div class="aviso aviso-{{ mensaje.tipo }}" style="margin:0 0 14px">{{ mensaje.texto }}</div>{% endif %}
     <form method="post" action="/login">
-      <label>Usuario
-        <select name="nombre">{% for n in usuarios %}<option>{{ n }}</option>{% endfor %}</select>
+      <label>Rol
+        <select name="nombre">{% for n in usuarios %}<option value="{{ n.nombre }}">{{ n.texto }}</option>{% endfor %}</select>
       </label>
       <label>Contraseña <input type="password" name="clave" required autofocus></label>
       <button type="submit">Ingresar</button>
     </form>
-    <p class="vacio" style="margin-top:16px">Prototipo con datos ficticios · contraseña de prueba: <code>demo123</code></p>
+    <p class="vacio" style="margin-top:16px">Prototipo</p>
   </div>
 </div>
 <script>document.addEventListener("DOMContentLoaded", () => window.lucide && lucide.createIcons());</script>

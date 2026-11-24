@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% from "_macros.html" import portaobjeto, ruta, campo_fecha %}
-{% block titulo %}Placa {{ p.correlativo }} · {{ p.sujeto_id }}{% endblock %}
+{% block titulo %}Placa {{ p.correlativo }}, ratón {{ p.sujeto_id }}{% endblock %}
 {% block contenido %}
 <div class="migas no-imprimir"><a href="/ratones">Ratones</a><i data-lucide="chevron-right"></i>
   <a href="/ratones/{{ p.sujeto_id }}?tab=placas" class="num">{{ p.sujeto_id }}</a><i data-lucide="chevron-right"></i>
   <span>Placa {{ p.serie }} {{ p.correlativo }}</span></div>
 <div class="encabezado">
-  <div><h1>Placa {{ p.correlativo }} <small>· serie {{ p.serie }}</small></h1>
+  <div><h1>Placa {{ p.correlativo }} <small>serie {{ p.serie }}</small></h1>
     <p><span class="chip chip-borde">{{ p.tipo_portaobjeto }}</span> <span class="chip chip-borde">{{ p.protocolo }}</span>
-       <span class="chip {{ 'chip-verde' if p.estado == 'terminada' else 'chip-naranja' if p.estado == 'perdida' else 'chip-ambar' if p.estado == 'en técnica' else 'chip-gris' }}">{{ p.estado }}</span></p></div>
+       <span class="chip chip-azul">{{ p.ubicacion }}</span>
+       <span class="chip {{ 'chip-verde' if p.estado == 'terminada' else 'chip-naranja' if p.estado == 'inutilizable' else 'chip-ambar' if p.estado == 'en técnica' else 'chip-gris' }}">{{ p.estado }}</span></p></div>
   {{ portaobjeto(p, True) }}
 </div>
 
@@ -23,12 +24,14 @@
       {% else %}
         <div class="etiqueta-rotulo"><div>{{ p.sujeto_id }}</div><div><small>sin técnica todavía</small></div><div>&nbsp;</div><span class="corr">{{ p.correlativo }}</span></div>
       {% endif %}
-      <div class="qr" title="Al escanear abre esta ficha">{{ qr|safe }}</div>
     </div>
-    <p class="vacio no-imprimir">El código QR abre esta ficha desde el celular. <a href="javascript:window.print()">Imprimir etiqueta</a></p>
+    <p class="vacio no-imprimir"><a href="javascript:window.print()">Imprimir etiqueta</a></p>
   </div>
 
-  {% if puede('tecnica_placa') and p.tecnica != 'HE' %}
+  {% if p.estado == 'inutilizable' %}
+  <div class="tarjeta"><h3><i data-lucide="ban"></i> Placa inutilizable</h3>
+    <p style="margin:0">Queda el registro, pero ya no se puede usar.{% if p.comentario %} <small>({{ p.comentario }})</small>{% endif %}</p></div>
+  {% elif puede('tecnica_placa') and p.tecnica != 'HE' %}
   <div class="tarjeta registrar no-imprimir">
     <h3><i data-lucide="pen-line"></i> Registrar técnica</h3>
     <form method="post" action="/placas/{{ p.id }}/tecnica" class="registro">
@@ -36,18 +39,20 @@
       <label>Marcador o técnica <input name="detalle" placeholder="ej. CD31" required></label>
       <label>Resultado <select name="resultado">{% for r in resultados %}<option>{{ r }}</option>{% endfor %}</select></label>
       <label style="flex:1 1 100%">Comentario (opcional) <textarea name="comentario"></textarea></label>
-      <label>¿Dónde queda la placa? <input name="ubicacion" value="Con {{ u.nombre }}"></label>
       {{ campo_fecha(hoy) }}
       <button>Guardar</button>
     </form>
   </div>
   {% endif %}
 
-  <div class="tarjeta">
-    <h3>Historial de la placa</h3>
-    {% if historial %}<table><tbody>{% for h in historial %}<tr><td>{{ h['Fecha'] }}</td><td>{{ h['Acción'] }}</td><td><small>{{ h['Detalle'] }}</small></td><td>{{ h['Quién'] }}</td></tr>{% endfor %}</tbody></table>
-    {% else %}<p class="vacio">Sin registros propios (cortada el {{ p.fecha_corte }}).</p>{% endif %}
-  </div>
+  {% if p.estado != 'inutilizable' and puede('tecnica_placa') %}
+  <details class="tarjeta no-imprimir"><summary><b>Marcar como inutilizable</b> <small>(rota, perdida, desprendida…)</small></summary>
+    <form method="post" action="/placas/{{ p.id }}/inutilizable" class="registro" style="margin-top:10px">
+      <label style="flex:1 1 100%">Motivo (opcional) <input name="comentario" placeholder="ej. se quebró"></label>
+      {{ campo_fecha(hoy) }}
+      <button class="secundario">Marcar inutilizable</button>
+    </form></details>
+  {% endif %}
 
   <div class="tarjeta no-imprimir">
     <h3>Otras placas del ratón</h3>
@@ -57,12 +62,12 @@
 
 <aside class="tarjeta propiedades">
   <h3>Dónde está</h3>
-  <p style="margin:0">{{ ruta(p.ubicacion) }}</p>
-  {% if puede('ubicacion') %}
+  <p style="margin:0">{{ p.ubicacion }}</p>
+  {% if movimientos %}<small>{% for m in movimientos %}Movida a {{ m['Detalle'].split(' [')[0] }} el {{ m['Fecha'] }} ({{ m['Quién'] }})<br>{% endfor %}</small>{% endif %}
+  {% if puede('ubicacion') and p.estado != 'inutilizable' %}
   <details class="no-imprimir"><summary><small>Mover placa</small></summary>
     <form method="post" action="/placas/{{ p.id }}/mover" class="registro" style="margin-top:8px">
-      <label>A una caja (posición automática) <select name="destino">{% for c in cajas %}<option>{{ c }}</option>{% endfor %}</select></label>
-      <label>u otro lugar <input name="otro" placeholder="ej. Con Estudiante A"></label>
+      <label>Laboratorio <select name="destino">{% for l in labs %}<option {{ 'selected' if l == p.ubicacion }}>{{ l }}</option>{% endfor %}</select></label>
       <button class="secundario">Mover</button>
     </form></details>
   {% endif %}
